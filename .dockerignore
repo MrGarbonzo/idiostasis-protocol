@@ -1,8 +1,9 @@
-node_modules/
-dist/
+**/node_modules/
+**/dist/
 contracts/
 docs/
 tests/
+guardian/tests/
 scripts/
 *.db
 *.db-shm

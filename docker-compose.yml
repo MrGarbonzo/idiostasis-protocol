@@ -15,7 +15,9 @@ services:
       - guardian
 
   guardian:
-    image: ghcr.io/mrgarbonzo/idiostasis_protocol/guardian:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.guardian
     ports:
       - "3100:3100"
     environment:
