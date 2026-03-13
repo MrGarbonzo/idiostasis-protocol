@@ -1,0 +1,13 @@
+node_modules/
+dist/
+contracts/
+docs/
+tests/
+scripts/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+.git/
+.github/

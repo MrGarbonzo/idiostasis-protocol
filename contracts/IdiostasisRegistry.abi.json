@@ -1,0 +1,120 @@
+[
+  {
+    "type": "function",
+    "name": "register",
+    "inputs": [
+      { "name": "entityType", "type": "uint8" },
+      { "name": "endpoint", "type": "string" },
+      { "name": "teeInstanceId", "type": "bytes16" },
+      { "name": "codeHash", "type": "bytes32" },
+      { "name": "attestationHash", "type": "bytes32" },
+      { "name": "ed25519Pubkey", "type": "bytes32" }
+    ],
+    "outputs": [
+      { "name": "tokenId", "type": "uint256" }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "heartbeat",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "updateEndpoint",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256" },
+      { "name": "newEndpoint", "type": "string" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "deactivate",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256" }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getEntry",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256" }
+    ],
+    "outputs": [
+      { "name": "entityType", "type": "uint8" },
+      { "name": "endpoint", "type": "string" },
+      { "name": "teeInstanceId", "type": "bytes16" },
+      { "name": "codeHash", "type": "bytes32" },
+      { "name": "attestationHash", "type": "bytes32" },
+      { "name": "ed25519Pubkey", "type": "bytes32" },
+      { "name": "registeredAt", "type": "uint256" },
+      { "name": "lastHeartbeat", "type": "uint256" },
+      { "name": "isActive", "type": "bool" },
+      { "name": "owner", "type": "address" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getTokenByOwner",
+    "inputs": [
+      { "name": "owner", "type": "address" }
+    ],
+    "outputs": [
+      { "name": "tokenId", "type": "uint256" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getActiveByType",
+    "inputs": [
+      { "name": "entityType", "type": "uint8" }
+    ],
+    "outputs": [
+      { "name": "tokenIds", "type": "uint256[]" }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "Registered",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256", "indexed": true },
+      { "name": "owner", "type": "address", "indexed": true },
+      { "name": "entityType", "type": "uint8", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "Heartbeat",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256", "indexed": true },
+      { "name": "timestamp", "type": "uint256", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "EndpointUpdated",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256", "indexed": true },
+      { "name": "newEndpoint", "type": "string", "indexed": false }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "Deactivated",
+    "inputs": [
+      { "name": "tokenId", "type": "uint256", "indexed": true }
+    ]
+  }
+]

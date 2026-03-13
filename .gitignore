@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*
+!.env.example
+.DS_Store
+contracts/broadcast/
+contracts/cache/

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Idiostasis Protocol - Technical Brief</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Georgia", serif;
+    font-size: 9pt;
+    color: #1a1a1a;
+    background: #fff;
+  }
+
+  .page {
+    width: 8.5in;
+    min-height: 11in;
+    margin: 0 auto;
+    padding: 0.7in 0.85in 0.7in 0.85in;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 10px;
+  }
+  .header h1 {
+    font-size: 18pt;
+    font-weight: bold;
+    letter-spacing: -0.3px;
+    color: #111;
+    margin-bottom: 4px;
+  }
+  .header .subtitle {
+    font-size: 10pt;
+    color: #444;
+  }
+
+  hr.heavy { border: none; border-top: 1px solid #999; margin: 10px 0; }
+
+  .body-grid {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 0;
+  }
+
+  .col-left {
+    grid-column: 1;
+    grid-row: 1 / 3;
+    padding-right: 28px;
+    border-right: 0.5px solid #ddd;
+  }
+
+  .col-right-top {
+    grid-column: 2;
+    grid-row: 1;
+    padding-left: 28px;
+  }
+
+  .col-right-img {
+    grid-column: 2;
+    grid-row: 2;
+    padding-left: 28px;
+    padding-top: 14px;
+    border-top: 0.5px solid #ddd;
+  }
+
+  .col-right-img img {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  h2 {
+    font-family: "Helvetica Neue", Arial, sans-serif;
+    font-size: 7.5pt;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: #111;
+    margin-top: 12px;
+    margin-bottom: 4px;
+    padding-bottom: 2px;
+    border-bottom: 0.5px solid #ccc;
+  }
+
+  h2:first-child { margin-top: 0; }
+
+  /* Left column: justified */
+  .col-left p {
+    line-height: 1.5;
+    margin-bottom: 5px;
+    text-align: justify;
+  }
+
+  /* Right column: left aligned to avoid stretch on narrow column */
+  .col-right-top p {
+    line-height: 1.5;
+    margin-bottom: 5px;
+    text-align: left;
+  }
+
+  b { font-weight: bold; }
+
+  @media print {
+    body { background: white; }
+    .page { margin: 0; padding: 0.7in 0.85in; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="header">
+    <h1>Idiostasis Protocol</h1>
+    <div class="subtitle">Attestation-Gated Confidential State Persistence for Autonomous Agents</div>
+  </div>
+
+  <hr class="heavy">
+
+  <div class="body-grid">
+
+    <div class="col-left">
+
+      <h2>Problem</h2>
+      <p>Every backup and recovery mechanism in current use assumes a human holds master credentials. This makes autonomous agents impossible to build: an agent that can be accessed or recovered by a human is not autonomous, it is automated. Decentralized storage solves availability but not key custody. Centralized secrets managers and secret sharing schemes both require a human trust authority somewhere in the chain. Naive TEE replication defers the problem rather than solving it, since it requires a mechanism to control which TEEs are authorized to receive state. That mechanism is what Idiostasis provides.</p>
+
+      <h2>Protocol Design</h2>
+      <p>Idiostasis distributes encrypted agent state across a permissionless network of guardian nodes. Admission is controlled entirely by TEE attestation against a verified code hash. No human authorizes entry at any point.</p>
+      <p><b>Vault Key.</b> Generated inside the primary agent's TEE at initialization. Never exists outside an attested enclave. Any TEE running the correct codebase, verified by code hash, may receive it. The code hash is the policy.</p>
+      <p><b>Network Formation.</b> Backup agents and guardians discover the primary via the ERC-8004 on-chain registry and initiate attestation handshakes. On pass, network addresses are written to the protocol database. Guardians receive the vault key and an encrypted database copy. Backup agents receive a heartbeat tracking entry only.</p>
+      <p><b>Heartbeat.</b> The primary pings all registered participants at a fixed interval. Backup agent response streaks are tracked in the database. Guardians monitor the absence of pings from the primary to detect liveness failure.</p>
+      <p><b>Succession.</b> When the primary goes offline, each guardian independently decrypts its local database copy, selects the backup agent with the highest heartbeat streak, and initiates an attestation handshake. The selection rule is deterministic: all guardians converge on the same target without coordination. The first successful handshake completes succession. The new primary updates the ERC-8004 registry and all remaining guardians stand down.</p>
+
+    </div>
+
+    <div class="col-right-top">
+
+      <h2>Security Properties</h2>
+      <p><b>Confidentiality.</b> Agent state is encrypted at rest. The vault key never exists outside an attested enclave. Guardian operators provision hardware but cannot extract secrets from their own enclaves. The TEE enforces this unconditionally.</p>
+      <p><b>Admission integrity.</b> Only nodes running the exact authorized codebase can join the network. A single byte change to the container definition changes the RTMR3 measurement register and fails attestation. There is no partial pass.</p>
+      <p><b>Succession correctness.</b> A false succession trigger causes temporary disruption only; the successor is a valid attested agent and assets remain protected. A fraudulent backup agent cannot win selection because admission requires attestation.</p>
+      <p><b>Availability and confidentiality separation.</b> Guardian operators have availability power: they can go offline. They have no confidentiality power. This separation is enforced by hardware, not policy.</p>
+      <p>The protocol is only as strong as the underlying TEE hardware. If attestation is broken at the hardware level, the protocol provides no guarantees. This is a known property of all TEE-based systems.</p>
+
+      <h2>Status</h2>
+      <p>Active development. Full protocol specification, security analysis, and implementation detail available in the complete whitepaper.</p>
+
+    </div>
+
+    <div class="col-right-img">
+      <img src="flow.png" alt="flow diagram" />
+    </div>
+
+  </div>
+
+</div>
+</body>
+</html>
