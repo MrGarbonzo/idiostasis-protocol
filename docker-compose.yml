@@ -1,0 +1,24 @@
+services:
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    ports:
+      - "8080:8080"
+    environment:
+      - AGENT_ROLE=primary
+      - EVM_RPC_URL=${EVM_RPC_URL}
+      - REGISTRY_CONTRACT_ADDRESS=${REGISTRY_CONTRACT_ADDRESS}
+      - AGENT_EXTERNAL_HOST=${AGENT_EXTERNAL_HOST}
+      - BOOTSTRAP_GUARDIANS=http://guardian:3100
+    depends_on:
+      - guardian
+
+  guardian:
+    image: ghcr.io/mrgarbonzo/idiostasis_protocol/guardian:latest
+    ports:
+      - "3100:3100"
+    environment:
+      - EVM_RPC_URL=${EVM_RPC_URL}
+      - REGISTRY_CONTRACT_ADDRESS=${REGISTRY_CONTRACT_ADDRESS}
+      - FUND_MANAGER_ENDPOINT=http://agent:8080
