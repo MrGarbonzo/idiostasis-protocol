@@ -2,27 +2,18 @@
   "name": "idiostasis-protocol",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
+  "packageManager": "npm@11.6.2",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "scripts": {
-    "build": "tsc && cp src/database/schema.sql dist/database/schema.sql",
-    "start": "node dist/agent/index.js",
-    "test": "vitest run",
-    "test:watch": "vitest"
-  },
-  "dependencies": {
-    "@scure/bip32": "^2.0.1",
-    "@scure/bip39": "^2.0.1",
-    "@sinclair/typebox": "^0.34.48",
-    "better-sqlite3": "^12.6.2",
-    "ed25519-keygen": "^0.6.2",
-    "node-cron": "^3.0.3",
-    "viem": "^2.21.0"
+    "build": "turbo run build",
+    "test": "turbo run test",
+    "lint": "turbo run lint"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^22.10.0",
-    "@types/node-cron": "^3.0.11",
-    "typescript": "^5.7.0",
-    "vitest": "^2.1.0"
+    "turbo": "^2.5.0",
+    "typescript": "^5.8.0"
   }
 }

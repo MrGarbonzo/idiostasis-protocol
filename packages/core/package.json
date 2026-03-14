@@ -1,0 +1,27 @@
+{
+  "name": "@idiostasis/core",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "tsx --test src/vault/key-manager.test.ts src/attestation/cpu-html.test.ts src/attestation/pccs-client.test.ts src/attestation/admission.test.ts src/database/db.test.ts src/database/snapshot.test.ts src/heartbeat/manager.test.ts src/succession/selector.test.ts src/succession/manager.test.ts",
+    "lint": "echo \"No linter configured\" && exit 0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.8.0"
+  }
+}

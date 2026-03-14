@@ -1,0 +1,19 @@
+{
+  "name": "@idiostasis/reference-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "test": "echo \"No tests yet\" && exit 0",
+    "lint": "echo \"No linter configured\" && exit 0"
+  },
+  "dependencies": {
+    "@idiostasis/core": "*",
+    "@idiostasis/erc8004-client": "*",
+    "@idiostasis/x402-client": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.0"
+  }
+}

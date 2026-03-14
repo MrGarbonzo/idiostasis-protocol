@@ -1,0 +1,176 @@
+import { describe, it, beforeEach, afterEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomBytes, generateKeyPairSync, sign as ed25519Sign } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { ProtocolDatabase } from '../database/db.js';
+import { SnapshotManager } from '../database/snapshot.js';
+import { AdmissionService } from './admission.js';
+import type { AdmissionRequest } from './admission.js';
+import { KeyExchangeSession } from '../vault/exchange.js';
+import { loadConfig } from '../config.js';
+import type { ProtocolConfig } from '../interfaces.js';
+
+let db: ProtocolDatabase;
+let tmpDir: string;
+let config: ProtocolConfig;
+let vaultKey: Uint8Array;
+let admissionService: AdmissionService;
+let snapshotManager: SnapshotManager;
+
+const dummySigner = async (_data: Uint8Array) => new Uint8Array(64);
+
+function setup() {
+  tmpDir = mkdtempSync(join(tmpdir(), 'idiostasis-adm-'));
+  vaultKey = new Uint8Array(randomBytes(32));
+  db = new ProtocolDatabase(join(tmpDir, 'test.db'), vaultKey);
+  config = loadConfig({
+    GUARDIAN_APPROVED_RTMR3: 'guardian-rtmr3-abc',
+    AGENT_APPROVED_RTMR3: 'agent-rtmr3-xyz',
+  });
+  db.setConfig('agent_rtmr3', 'agent-rtmr3-xyz');
+  snapshotManager = new SnapshotManager(db, vaultKey, 'primary-tee');
+  admissionService = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner);
+}
+
+function teardown() {
+  db.close();
+  rmSync(tmpDir, { recursive: true, force: true });
+}
+
+/** Create a valid admission request with a real Ed25519 signature. */
+async function makeValidRequest(
+  role: 'guardian' | 'backup_agent',
+  overrides?: Partial<AdmissionRequest>,
+): Promise<AdmissionRequest> {
+  // Generate real X25519 keypair
+  const session = await KeyExchangeSession.generate();
+  const keys = session.getPublicKeys();
+
+  // Generate real Ed25519 keypair and sign x25519 public key
+  const { publicKey: ed25519Pub, privateKey: ed25519Priv } = generateKeyPairSync('ed25519');
+  const signature = ed25519Sign(null, keys.x25519, ed25519Priv);
+  const derBuf = ed25519Pub.export({ type: 'spki', format: 'der' });
+  const ed25519PublicRaw = new Uint8Array(derBuf.subarray(derBuf.length - 32));
+
+  return {
+    role,
+    networkAddress: 'node.test:8080',
+    teeInstanceId: `tee-${randomBytes(8).toString('hex')}`,
+    rtmr3: role === 'guardian' ? 'guardian-rtmr3-abc' : 'agent-rtmr3-xyz',
+    x25519PublicKey: keys.x25519,
+    ed25519PublicKey: ed25519PublicRaw,
+    ed25519Signature: new Uint8Array(signature),
+    nonce: randomBytes(16).toString('hex'),
+    timestamp: Date.now(),
+    ...overrides,
+  };
+}
+
+describe('AdmissionService', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('rejects replayed nonce', async () => {
+    const req = await makeValidRequest('guardian');
+    const result1 = await admissionService.handleAdmissionRequest(req);
+    assert.equal(result1.accepted, true);
+
+    const result2 = await admissionService.handleAdmissionRequest(req);
+    assert.equal(result2.accepted, false);
+    assert.equal(result2.reason, 'replay');
+  });
+
+  it('rejects stale timestamp (> 60s)', async () => {
+    const req = await makeValidRequest('guardian', {
+      timestamp: Date.now() - 120_000, // 2 minutes ago
+    });
+    const result = await admissionService.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'stale_timestamp');
+  });
+
+  it('rejects invalid ed25519 signature', async () => {
+    const req = await makeValidRequest('guardian', {
+      ed25519Signature: new Uint8Array(64), // Zeroed — invalid
+    });
+    const result = await admissionService.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'invalid_signature');
+  });
+
+  it('rejects RTMR3 mismatch for guardian role', async () => {
+    const req = await makeValidRequest('guardian', {
+      rtmr3: 'wrong-guardian-rtmr3',
+    });
+    const result = await admissionService.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'rtmr3_mismatch');
+  });
+
+  it('rejects RTMR3 mismatch for backup_agent role', async () => {
+    const req = await makeValidRequest('backup_agent', {
+      rtmr3: 'wrong-agent-rtmr3',
+    });
+    const result = await admissionService.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'rtmr3_mismatch');
+  });
+
+  it('accepts valid guardian: writes to DB, returns vault key + snapshot', async () => {
+    const req = await makeValidRequest('guardian');
+    const result = await admissionService.handleAdmissionRequest(req);
+
+    assert.equal(result.accepted, true);
+    assert.ok(result.vaultKey, 'guardian must receive vault key');
+    assert.ok(result.dbSnapshot, 'guardian must receive db snapshot');
+    assert.ok(result.primaryX25519PublicKey);
+    assert.ok(result.primaryEd25519PublicKey);
+
+    // Verify written to DB
+    const guardian = db.getGuardian(req.teeInstanceId);
+    assert.ok(guardian);
+    assert.equal(guardian.status, 'active');
+    assert.equal(guardian.networkAddress, req.networkAddress);
+  });
+
+  it('accepts valid backup_agent: writes to DB, no vault key in response', async () => {
+    const req = await makeValidRequest('backup_agent');
+    const result = await admissionService.handleAdmissionRequest(req);
+
+    assert.equal(result.accepted, true);
+    assert.equal(result.vaultKey, undefined, 'backup_agent must NOT receive vault key');
+    assert.equal(result.dbSnapshot, undefined, 'backup_agent must NOT receive snapshot');
+    assert.ok(result.primaryX25519PublicKey);
+
+    // Verify written to DB
+    const backup = db.getBackupAgent(req.teeInstanceId);
+    assert.ok(backup);
+    assert.equal(backup.status, 'standby');
+    assert.equal(backup.heartbeatStreak, 0);
+  });
+
+  it('guardian admission: provisionedBy is external', async () => {
+    const req = await makeValidRequest('guardian');
+    await admissionService.handleAdmissionRequest(req);
+    const guardian = db.getGuardian(req.teeInstanceId);
+    assert.equal(guardian!.provisionedBy, 'external');
+  });
+
+  it('guardian admission logs ADMISSION event', async () => {
+    const req = await makeValidRequest('guardian');
+    await admissionService.handleAdmissionRequest(req);
+    const events = db.getRecentEvents(1);
+    assert.equal(events[0].eventType, 'admission');
+    assert.ok(events[0].detail!.startsWith('guardian:'));
+  });
+
+  it('backup agent admission logs ADMISSION event', async () => {
+    const req = await makeValidRequest('backup_agent');
+    await admissionService.handleAdmissionRequest(req);
+    const events = db.getRecentEvents(1);
+    assert.equal(events[0].eventType, 'admission');
+    assert.ok(events[0].detail!.startsWith('backup:'));
+  });
+});

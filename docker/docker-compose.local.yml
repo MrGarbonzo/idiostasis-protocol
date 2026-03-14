@@ -1,0 +1,50 @@
+services:
+  agent:
+    build:
+      context: ..
+      dockerfile: docker/agent.dockerfile
+    container_name: idiostasis-agent
+    ports:
+      - "3001:3001"
+    environment:
+      - DEV_MODE=true
+      - AGENT_ROLE=primary
+      - NODE_ENV=development
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/status"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - idiostasis
+
+  guardian:
+    build:
+      context: ..
+      dockerfile: docker/guardian.dockerfile
+    container_name: idiostasis-guardian
+    ports:
+      - "3000:3000"
+    environment:
+      - DEV_MODE=true
+      - NODE_ENV=development
+      - BASE_RPC_URL=http://placeholder.local
+      - ERC8004_REGISTRY_ADDRESS=0x0000000000000000000000000000000000000000
+      - GUARDIAN_APPROVED_RTMR3=dev-measurement
+      - GUARDIAN_DATA_DIR=/data
+      - HEARTBEAT_INTERVAL_MS=5000
+      - LIVENESS_FAILURE_THRESHOLD=6
+    volumes:
+      - guardian-data:/data
+    depends_on:
+      agent:
+        condition: service_healthy
+    networks:
+      - idiostasis
+
+networks:
+  idiostasis:
+    driver: bridge
+
+volumes:
+  guardian-data:

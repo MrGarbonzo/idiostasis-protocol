@@ -7,33 +7,25 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  build-and-test:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
 
-      - run: npm ci
-      - run: npm run build
-      - run: npm test
+      - run: npm install
 
-  forge:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+      - name: Build (changed packages only)
+        run: npx turbo run build
 
-      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Test (changed packages only)
+        run: npx turbo run test
 
-      - working-directory: contracts
-        run: forge build
-
-      - working-directory: contracts
-        run: forge test
+      # NOTE: Succession e2e test (packages/core/test/succession-e2e/) is a
+      # required gate before any release. No protocol release without it passing.
+      # Wire it as a separate required status check once the test exists.
