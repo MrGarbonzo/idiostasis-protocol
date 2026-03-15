@@ -260,16 +260,34 @@ export class SecretVmClient {
     throw new Error(`pollUntilRunning: timeout after ${timeoutMs}ms for VM ${vmId}`);
   }
 
-  async stopVm(_vmId: string): Promise<void> {
-    // TODO: Confirm the stop/delete endpoint from SecretVM docs when available.
-    throw new NotImplementedError('stopVm: endpoint not confirmed');
-  }
-}
+  async stopVm(vmId: string): Promise<void> {
+    const path = `/api/agent/vm/${vmId}`;
+    const headers = await this.buildHeaders('DELETE', path, '');
 
-export class NotImplementedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'NotImplementedError';
+    const res = await this.http.fetch(`${this.baseUrl}${path}`, {
+      method: 'DELETE',
+      headers: headers as unknown as Record<string, string>,
+    });
+
+    if (res.status === 404) return; // already gone — treat as success
+
+    if (res.status === 405) {
+      // Method not allowed — try POST /stop fallback
+      const stopPath = `/api/agent/vm/${vmId}/stop`;
+      const stopHeaders = await this.buildHeaders('POST', stopPath, '');
+      const stopRes = await this.http.fetch(`${this.baseUrl}${stopPath}`, {
+        method: 'POST',
+        headers: stopHeaders as unknown as Record<string, string>,
+      });
+      if (!stopRes.ok && stopRes.status !== 404) {
+        throw new Error(`stopVm fallback failed: ${stopRes.status}`);
+      }
+      console.log(`[secretvm] stopVm: used POST /stop fallback for ${vmId}`);
+      return;
+    }
+
+    if (!res.ok) throw new Error(`stopVm failed: ${res.status}`);
+    console.log(`[secretvm] VM ${vmId} stopped`);
   }
 }
 

@@ -1,4 +1,4 @@
-import type { PaymentTerms, SolanaWallet } from './types.js';
+import type { EvmWallet, PaymentTerms } from './types.js';
 import { X402PaymentFailedError } from './types.js';
 
 /**
@@ -13,18 +13,22 @@ const defaultHttpFetcher: HttpFetcher = {
 };
 
 /**
- * x402 HTTP payment client.
+ * x402 HTTP payment client (EVM / Base chain).
  * Handles 402 Payment Required flows automatically:
  * fetches URL, pays if 402, retries.
  */
 export class X402Client {
-  private readonly solanaRpcUrl: string;
-  private readonly wallet: SolanaWallet;
+  private readonly wallet: EvmWallet;
+  private readonly facilitatorUrl: string | undefined;
   private readonly httpFetcher: HttpFetcher;
 
-  constructor(solanaRpcUrl: string, wallet: SolanaWallet, httpFetcher?: HttpFetcher) {
-    this.solanaRpcUrl = solanaRpcUrl;
+  constructor(
+    wallet: EvmWallet,
+    facilitatorUrl?: string,
+    httpFetcher?: HttpFetcher,
+  ) {
     this.wallet = wallet;
+    this.facilitatorUrl = facilitatorUrl;
     this.httpFetcher = httpFetcher ?? defaultHttpFetcher;
   }
 
@@ -39,14 +43,14 @@ export class X402Client {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    // 402 — extract payment terms, pay, retry
+    // 402 — extract payment terms, sign payment, retry
     const terms = await this.getPaymentTerms(response);
-    await this.executePayment(terms);
+    const paymentSignature = await this.signPayment(terms);
 
     // Retry with payment header
     const retryResponse = await this.httpFetcher.fetch(url, {
       headers: {
-        'x-payment-proof': `${this.wallet.publicKey}:${terms.payTo}:${terms.amount}`,
+        'x-payment': paymentSignature,
       },
     });
 
@@ -75,23 +79,19 @@ export class X402Client {
     return {
       amount: Number(body.amount),
       currency: String(body.currency),
-      chain: String(body.chain ?? 'solana'),
+      chain: String(body.chain ?? 'base-sepolia'),
       payTo: String(body.payTo),
       memo: body.memo ? String(body.memo) : undefined,
     };
   }
 
-  private async executePayment(terms: PaymentTerms): Promise<void> {
-    // Build a Solana transfer transaction
-    // In production this would construct a real SPL token transfer
-    // For now, sign and send via RPC
-    const tx = {
-      type: 'transfer',
-      from: this.wallet.publicKey,
-      to: terms.payTo,
-      amount: terms.amount,
-      currency: terms.currency,
-    };
-    await this.wallet.signTransaction(tx);
+  /**
+   * Sign a payment authorization for the given terms.
+   * Returns a compact proof string: `{walletAddress}:{payTo}:{amount}:{signature}`.
+   */
+  private async signPayment(terms: PaymentTerms): Promise<string> {
+    const message = `x402:${terms.payTo}:${terms.amount}:${terms.currency}`;
+    const signature = await this.wallet.signMessage(message);
+    return `${this.wallet.address}:${terms.payTo}:${terms.amount}:${signature}`;
   }
 }

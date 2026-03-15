@@ -10,7 +10,10 @@ export interface AdmissionRequest {
   role: 'guardian' | 'backup_agent';
   networkAddress: string;
   teeInstanceId: string;
-  rtmr3: string;
+  /** Self-reported RTMR3 — only trusted in DEV_MODE. In production, RTMR3 comes from PCCS. */
+  rtmr3?: string;
+  /** SecretVM domain for independent attestation (e.g. violet-ostrich.vm.scrtlabs.com) */
+  domain?: string;
   x25519PublicKey: Uint8Array;
   ed25519PublicKey: Uint8Array;
   ed25519Signature: Uint8Array;
@@ -39,6 +42,7 @@ export class AdmissionService {
   private readonly vaultKey: Uint8Array;
   private readonly snapshotManager: SnapshotManager;
   private readonly signer: (data: Uint8Array) => Promise<Uint8Array>;
+  private readonly attestationProvider?: AttestationProvider;
 
   constructor(
     db: ProtocolDatabase,
@@ -46,12 +50,18 @@ export class AdmissionService {
     vaultKey: Uint8Array,
     snapshotManager: SnapshotManager,
     signer: (data: Uint8Array) => Promise<Uint8Array>,
+    attestationProvider?: AttestationProvider,
   ) {
     this.db = db;
     this.config = config;
     this.vaultKey = vaultKey;
     this.snapshotManager = snapshotManager;
     this.signer = signer;
+    this.attestationProvider = attestationProvider;
+
+    if (!attestationProvider && process.env.DEV_MODE !== 'true') {
+      console.warn('[admission] No attestation provider — RTMR3 unverified');
+    }
   }
 
   async handleAdmissionRequest(req: AdmissionRequest): Promise<AdmissionResult> {
@@ -71,18 +81,55 @@ export class AdmissionService {
       return { accepted: false, reason: 'invalid_signature' };
     }
 
-    // 4. Verify RTMR3 based on role
+    // 4. Verify RTMR3 — independently via PCCS in production, self-reported in DEV_MODE
+    let verifiedRtmr3: string;
+
+    if (process.env.DEV_MODE === 'true' || !this.attestationProvider) {
+      // DEV MODE or no provider: trust self-reported RTMR3
+      verifiedRtmr3 = req.rtmr3 ?? 'dev-measurement';
+      if (process.env.DEV_MODE === 'true') {
+        console.warn(
+          `[admission] DEV_MODE: skipping attestation for ${req.teeInstanceId}`,
+        );
+      }
+    } else {
+      // PRODUCTION: independently verify RTMR3 via PCCS
+      if (!req.domain) {
+        return { accepted: false, reason: 'missing_domain' };
+      }
+
+      try {
+        const quote = await this.attestationProvider.fetchQuote(req.domain);
+        const attestResult = await this.attestationProvider.verifyQuote(quote);
+
+        if (!attestResult.valid) {
+          return { accepted: false, reason: 'attestation_invalid' };
+        }
+
+        verifiedRtmr3 = attestResult.rtmr3;
+
+        // TODO: implement cert fingerprint check — see SecretVM docs Step 6
+        console.log(
+          `[admission] Attestation verified for ${req.teeInstanceId}, ` +
+          `RTMR3: ${verifiedRtmr3.slice(0, 16)}...`,
+        );
+      } catch (err) {
+        console.error(`[admission] Attestation failed for ${req.domain}: ${err}`);
+        return { accepted: false, reason: 'attestation_failed' };
+      }
+    }
+
+    // Check verifiedRtmr3 against approved list
     if (req.role === 'guardian') {
-      if (!this.config.guardianApprovedRtmr3.includes(req.rtmr3)) {
+      if (!this.config.guardianApprovedRtmr3.includes(verifiedRtmr3)) {
         return { accepted: false, reason: 'rtmr3_mismatch' };
       }
     } else {
-      // backup_agent: must match agent RTMR3 (same codebase as primary)
       const agentRtmr3 = this.db.getConfig('agent_rtmr3');
       const approvedList = agentRtmr3
         ? [agentRtmr3, ...this.config.agentApprovedRtmr3]
         : this.config.agentApprovedRtmr3;
-      if (!approvedList.includes(req.rtmr3)) {
+      if (!approvedList.includes(verifiedRtmr3)) {
         return { accepted: false, reason: 'rtmr3_mismatch' };
       }
     }
@@ -99,7 +146,7 @@ export class AdmissionService {
         id: req.teeInstanceId,
         networkAddress: req.networkAddress,
         teeInstanceId: req.teeInstanceId,
-        rtmr3: req.rtmr3,
+        rtmr3: verifiedRtmr3,
         admittedAt: now,
         lastAttestedAt: now,
         lastSeenAt: now,
@@ -108,6 +155,7 @@ export class AdmissionService {
         agentVmId: null,
       };
       this.db.upsertGuardian(record);
+      this.db.setPeerPublicKey(req.teeInstanceId, req.ed25519PublicKey, req.x25519PublicKey);
       this.db.logEvent(ProtocolEventType.ADMISSION, `guardian:${req.teeInstanceId}`);
 
       // 7. Guardian response: vault key + snapshot
@@ -128,13 +176,14 @@ export class AdmissionService {
         id: req.teeInstanceId,
         networkAddress: req.networkAddress,
         teeInstanceId: req.teeInstanceId,
-        rtmr3: req.rtmr3,
+        rtmr3: verifiedRtmr3,
         registeredAt: now,
         heartbeatStreak: 0,
         lastHeartbeatAt: now,
         status: 'standby',
       };
       this.db.upsertBackupAgent(record);
+      this.db.setPeerPublicKey(req.teeInstanceId, req.ed25519PublicKey, req.x25519PublicKey);
       this.db.logEvent(ProtocolEventType.ADMISSION, `backup:${req.teeInstanceId}`);
 
       // 7. Backup response: no vault key (spec Section 6)

@@ -1,0 +1,249 @@
+import type { MoltbookStateAdapter } from '../state/adapter.js';
+import type { MoltbookHealthAdapter } from '../health/adapter.js';
+import type {
+  AdmissionService,
+  AdmissionRequest,
+  AdmissionResult,
+  HeartbeatManager,
+  ProtocolDatabase,
+  VaultKeyManager,
+  PingEnvelope,
+  ProtocolConfig,
+} from '@idiostasis/core';
+import {
+  handleBackupReadyRequest,
+  ProtocolEventType,
+  rotateVaultKey,
+  KeyExchangeSession,
+} from '@idiostasis/core';
+import type { BackupReadyRequest, VaultKeyTransport } from '@idiostasis/core';
+import type { ERC8004Client, EvmWallet } from '@idiostasis/erc8004-client';
+
+export interface StatusResponse {
+  role: string;
+  teeInstanceId: string;
+  healthy: boolean;
+  uptime: number;
+  recoveryCount: number;
+}
+
+export interface HandlerDeps {
+  stateAdapter: MoltbookStateAdapter;
+  healthAdapter: MoltbookHealthAdapter;
+  teeInstanceId: string;
+  role: string;
+  startTime: number;
+  admissionService?: AdmissionService;
+  heartbeatManager?: HeartbeatManager;
+  db?: ProtocolDatabase;
+  agentRtmr3?: string;
+  evmAddress?: string;
+  erc8004Client?: ERC8004Client;
+  erc8004TokenId?: number;
+  evmWallet?: EvmWallet;
+  vaultKeyManager?: VaultKeyManager;
+  config?: ProtocolConfig;
+  signer?: (data: Uint8Array) => Promise<Uint8Array>;
+}
+
+export async function handleStatus(deps: HandlerDeps): Promise<StatusResponse> {
+  const healthResult = await deps.healthAdapter.check();
+  const state = deps.stateAdapter.getState();
+  return {
+    role: deps.role,
+    teeInstanceId: deps.teeInstanceId,
+    healthy: healthResult.healthy,
+    uptime: Date.now() - deps.startTime,
+    recoveryCount: state.recoveryCount,
+  };
+}
+
+export async function handlePing(
+  deps: HandlerDeps,
+  body: unknown,
+): Promise<{ ok: boolean; timestamp?: number; error?: string }> {
+  if (!deps.heartbeatManager) {
+    return { ok: true, timestamp: Date.now() };
+  }
+
+  const envelope = body as Record<string, unknown>;
+  if (!envelope || !envelope.teeInstanceId || !envelope.timestamp || !envelope.nonce || !envelope.signature) {
+    return { ok: false, error: 'missing required ping envelope fields' };
+  }
+
+  // In DEV_MODE, skip signature verification but still track the ping
+  if (process.env.DEV_MODE === 'true') {
+    deps.heartbeatManager.onPingReceived();
+    return { ok: true, timestamp: Date.now() };
+  }
+
+  // TODO: Phase 8+ — verify ping envelope signature against stored peer public key
+  deps.heartbeatManager.onPingReceived();
+  return { ok: true, timestamp: Date.now() };
+}
+
+export async function handleAdmission(
+  deps: HandlerDeps,
+  body: unknown,
+): Promise<AdmissionResult> {
+  if (!deps.admissionService) {
+    return { accepted: false, reason: 'admission_service_not_initialized' };
+  }
+
+  const req = body as Record<string, unknown>;
+  if (!req || !req.role || !req.networkAddress || !req.teeInstanceId || !req.nonce) {
+    return { accepted: false, reason: 'invalid_request' };
+  }
+
+  // Deserialize Uint8Array fields from base64 if they come as strings
+  const admissionReq: AdmissionRequest = {
+    role: req.role as 'guardian' | 'backup_agent',
+    networkAddress: req.networkAddress as string,
+    teeInstanceId: req.teeInstanceId as string,
+    rtmr3: (req.rtmr3 as string) ?? undefined,
+    domain: (req.domain as string) ?? undefined,
+    x25519PublicKey: deserializeKey(req.x25519PublicKey),
+    ed25519PublicKey: deserializeKey(req.ed25519PublicKey),
+    ed25519Signature: deserializeKey(req.ed25519Signature),
+    nonce: req.nonce as string,
+    timestamp: (req.timestamp as number) ?? Date.now(),
+  };
+
+  return deps.admissionService.handleAdmissionRequest(admissionReq);
+}
+
+export async function handleEvmAddress(
+  deps: HandlerDeps,
+): Promise<{ address: string | null }> {
+  return { address: deps.evmAddress ?? null };
+}
+
+export async function handleWorkload(
+  deps: HandlerDeps,
+): Promise<{ handle: string; displayName: string }> {
+  const state = deps.stateAdapter.getState();
+  return { handle: state.agentHandle, displayName: state.displayName };
+}
+
+export async function handleDiscover(
+  deps: HandlerDeps,
+): Promise<{ teeInstanceId: string; role: string; networkAddress: string; rtmr3: string; timestamp: number }> {
+  return {
+    teeInstanceId: deps.teeInstanceId,
+    role: deps.role,
+    networkAddress: `http://localhost:${process.env.PORT ?? '3001'}`,
+    rtmr3: deps.agentRtmr3 ?? 'dev-measurement',
+    timestamp: Date.now(),
+  };
+}
+
+export async function handleBackupReady(
+  deps: HandlerDeps,
+  body: unknown,
+): Promise<Record<string, unknown>> {
+  const req = body as BackupReadyRequest;
+  const ownRtmr3 = deps.agentRtmr3 ?? 'dev-measurement';
+  const response = await handleBackupReadyRequest(req, ownRtmr3);
+
+  // Serialize Uint8Array fields to base64 for JSON transport
+  return {
+    rtmr3: response.rtmr3,
+    x25519PublicKey: Buffer.from(response.x25519PublicKey).toString('base64'),
+    ed25519PublicKey: Buffer.from(response.ed25519PublicKey).toString('base64'),
+    ed25519Signature: Buffer.from(response.ed25519Signature).toString('base64'),
+  };
+}
+
+export async function handleBackupConfirm(
+  deps: HandlerDeps,
+  _body: unknown,
+): Promise<{ ok: boolean }> {
+  if (!deps.db) {
+    return { ok: false };
+  }
+
+  deps.db.logEvent(ProtocolEventType.SUCCESSION_COMPLETE);
+  console.log('[agent] Succession confirmed — rotating vault key');
+
+  // Rotate vault key (Decision 6)
+  if (deps.vaultKeyManager && deps.signer) {
+    try {
+      const guardians = deps.db.listGuardians('active');
+      const oldVaultKey = deps.vaultKeyManager.getKey();
+
+      const keyExchangeFn = async (guardian: { teeInstanceId: string; }) => {
+        // Look up guardian's stored X25519 public key
+        const peerKeys = deps.db!.getPeerPublicKey(guardian.teeInstanceId);
+        const session = await KeyExchangeSession.generate();
+        if (peerKeys?.x25519) {
+          const sharedSecret = session.computeSharedSecret(peerKeys.x25519);
+          return { session, sharedSecret };
+        }
+        // No stored X25519 key — generate dummy shared secret (guardian will need re-admission)
+        console.warn(`[agent] No X25519 key for guardian ${guardian.teeInstanceId} — skipping`);
+        throw new Error('no_x25519_key');
+      };
+
+      // Transport: POST wrapped key to guardian's /api/vault-key-update
+      const transport: VaultKeyTransport = async (guardian, wrappedKey, snapshot, primaryX25519PublicKey) => {
+        try {
+          const url = guardian.networkAddress.startsWith('http')
+            ? `${guardian.networkAddress}/api/vault-key-update`
+            : `http://${guardian.networkAddress}/api/vault-key-update`;
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              wrappedKey,
+              snapshot,
+              primaryX25519PublicKey: Buffer.from(primaryX25519PublicKey).toString('base64'),
+            }),
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!res.ok) return false;
+          const json = await res.json() as { ok: boolean };
+          return json.ok === true;
+        } catch {
+          return false;
+        }
+      };
+
+      await rotateVaultKey(
+        deps.db,
+        oldVaultKey,
+        deps.vaultKeyManager,
+        guardians,
+        keyExchangeFn,
+        transport,
+        deps.signer,
+        deps.teeInstanceId,
+      );
+      console.log('[agent] Vault key rotated successfully');
+    } catch (err) {
+      console.error(`[agent] Vault key rotation failed: ${err}`);
+    }
+  }
+
+  // Update ERC-8004 registry endpoint after succession
+  if (deps.erc8004Client && deps.erc8004TokenId && deps.evmWallet) {
+    try {
+      const newEndpoint = `http://localhost:${process.env.PORT ?? '3001'}/discover`;
+      await deps.erc8004Client.updateEndpoint(
+        deps.erc8004TokenId, 'discovery', newEndpoint, deps.evmWallet,
+      );
+      console.log('[agent] ERC-8004 endpoint updated — succession complete');
+    } catch (err) {
+      console.warn(`[agent] ERC-8004 endpoint update failed (non-fatal): ${err}`);
+    }
+  }
+
+  console.log('[agent] Succession complete — now primary');
+  return { ok: true };
+}
+
+function deserializeKey(value: unknown): Uint8Array {
+  if (value instanceof Uint8Array) return value;
+  if (Buffer.isBuffer(value)) return new Uint8Array(value);
+  if (typeof value === 'string') return new Uint8Array(Buffer.from(value, 'base64'));
+  return new Uint8Array(32);
+}

@@ -68,6 +68,25 @@ export interface AttestationProvider {
    * Tries endpoints in order; hard failure only if all exhausted.
    */
   verifyQuote(quote: string): Promise<AttestationResult>;
+
+  /**
+   * Fetch structured attestation report from self.html endpoint.
+   * Returns parsed fields including RTMR3 directly.
+   * More reliable than parsing cpu.html when available.
+   * Optional — implementations may not support it.
+   */
+  fetchSelfReport?(domain: string): Promise<SelfReport>;
+}
+
+/** Structured attestation report parsed from self.html endpoint. */
+export interface SelfReport {
+  rtmr0?: string;
+  rtmr1?: string;
+  rtmr2?: string;
+  rtmr3?: string;
+  reportData?: string;
+  mrtd?: string;
+  raw?: string;
 }
 
 /** Result of a PCCS attestation quote verification. */

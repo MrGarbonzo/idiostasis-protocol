@@ -11,9 +11,18 @@ export const ProtocolEventType = {
   GUARDIAN_REMOVED: 'guardian_removed',
   GUARDIAN_PROVISIONED: 'guardian_provisioned',
   GUARDIAN_DEPROVISIONED: 'guardian_deprovisioned',
+  VAULT_KEY_ROTATED: 'vault_key_rotated',
 } as const;
 
 export type ProtocolEventType = (typeof ProtocolEventType)[keyof typeof ProtocolEventType];
+
+export const CONFIG_KEYS = {
+  AGENT_RTMR3: 'agent_rtmr3',
+  ERC8004_TOKEN_ID: 'erc8004_token_id',
+  EVM_MNEMONIC: 'evm_mnemonic',
+  EXTERNAL_STABLE_SINCE: 'external_stable_since',
+  SNAPSHOT_SEQUENCE_NUM: 'snapshot_sequence_num',
+} as const;
 
 export interface ProtocolEvent {
   id: number;
@@ -225,6 +234,35 @@ export class ProtocolDatabase {
     }
 
     return true;
+  }
+
+  // --- Peer public keys ---
+
+  setPeerPublicKey(teeInstanceId: string, ed25519PublicKey: Uint8Array, x25519PublicKey?: Uint8Array): void {
+    this.db.prepare(`
+      INSERT INTO peer_public_keys (tee_instance_id, ed25519_pubkey, x25519_pubkey, stored_at)
+      VALUES (@teeInstanceId, @ed25519, @x25519, @now)
+      ON CONFLICT(tee_instance_id) DO UPDATE SET
+        ed25519_pubkey = @ed25519,
+        x25519_pubkey = @x25519,
+        stored_at = @now
+    `).run({
+      teeInstanceId,
+      ed25519: Buffer.from(ed25519PublicKey),
+      x25519: x25519PublicKey ? Buffer.from(x25519PublicKey) : null,
+      now: Date.now(),
+    });
+  }
+
+  getPeerPublicKey(teeInstanceId: string): { ed25519: Uint8Array; x25519: Uint8Array | null } | null {
+    const row = this.db.prepare(
+      'SELECT ed25519_pubkey, x25519_pubkey FROM peer_public_keys WHERE tee_instance_id = ?'
+    ).get(teeInstanceId) as { ed25519_pubkey: Buffer; x25519_pubkey: Buffer | null } | undefined;
+    if (!row) return null;
+    return {
+      ed25519: new Uint8Array(row.ed25519_pubkey),
+      x25519: row.x25519_pubkey ? new Uint8Array(row.x25519_pubkey) : null,
+    };
   }
 
   // --- Protocol events ---

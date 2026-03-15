@@ -6,6 +6,7 @@ export type {
   HealthCheckResult,
   AttestationProvider,
   AttestationResult,
+  SelfReport,
   ProtocolConfig,
   GuardianRecord,
   BackupAgentRecord,
@@ -27,14 +28,14 @@ export {
 } from './config.js';
 
 // Vault key lifecycle
-export { VaultKeyManager } from './vault/key-manager.js';
+export { VaultKeyManager, generateAgentMnemonic } from './vault/key-manager.js';
 export { deriveSealingKey, sealData, unsealData, resolveTeeInstanceId } from './vault/sealing.js';
 export type { SealedData } from './vault/sealing.js';
 export { KeyExchangeSession } from './vault/exchange.js';
 export type { WrappedKey, PublicKeys } from './vault/exchange.js';
 
 // Attestation
-export { SecretLabsAttestationProvider } from './attestation/provider.js';
+export { SecretLabsAttestationProvider, parseSelfReport } from './attestation/provider.js';
 export { extractQuoteFromHtml } from './attestation/cpu-html.js';
 export { verifyWithPccs, readLocalRtmr3 } from './attestation/pccs-client.js';
 export type { PccsFetcher } from './attestation/pccs-client.js';
@@ -42,7 +43,7 @@ export { AdmissionService } from './attestation/admission.js';
 export type { AdmissionRequest, AdmissionResult } from './attestation/admission.js';
 
 // Database
-export { ProtocolDatabase, ProtocolEventType } from './database/db.js';
+export { ProtocolDatabase, ProtocolEventType, CONFIG_KEYS } from './database/db.js';
 export type { ProtocolEvent } from './database/db.js';
 export { SnapshotManager } from './database/snapshot.js';
 export type { DbSnapshot } from './database/snapshot.js';
@@ -70,4 +71,5 @@ export type {
   Erc8004Checker,
   BackupReadyRequest,
   BackupReadyResponse,
+  VaultKeyTransport,
 } from './succession/manager.js';

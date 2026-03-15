@@ -15,7 +15,9 @@
     "test": "tsx --test src/client.test.ts",
     "lint": "echo \"No linter configured\" && exit 0"
   },
-  "dependencies": {},
+  "dependencies": {
+    "viem": "^2.0.0"
+  },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "tsx": "^4.21.0",

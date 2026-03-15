@@ -164,6 +164,45 @@ describe('ProtocolDatabase — Agent State', () => {
   });
 });
 
+describe('ProtocolDatabase — Peer Public Keys', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('setPeerPublicKey stores ed25519 key correctly', () => {
+    const key = new Uint8Array(randomBytes(32));
+    db.setPeerPublicKey('tee-1', key);
+    const result = db.getPeerPublicKey('tee-1');
+    assert.ok(result);
+    assert.deepStrictEqual(result.ed25519, key);
+    assert.equal(result.x25519, null);
+  });
+
+  it('setPeerPublicKey stores both ed25519 and x25519 keys', () => {
+    const ed25519 = new Uint8Array(randomBytes(32));
+    const x25519 = new Uint8Array(randomBytes(32));
+    db.setPeerPublicKey('tee-2', ed25519, x25519);
+    const result = db.getPeerPublicKey('tee-2');
+    assert.ok(result);
+    assert.deepStrictEqual(result.ed25519, ed25519);
+    assert.deepStrictEqual(result.x25519, x25519);
+  });
+
+  it('getPeerPublicKey returns both keys', () => {
+    const ed25519 = new Uint8Array(randomBytes(32));
+    const x25519 = new Uint8Array(randomBytes(32));
+    db.setPeerPublicKey('tee-3', ed25519, x25519);
+    const result = db.getPeerPublicKey('tee-3');
+    assert.ok(result);
+    assert.equal(result.ed25519.length, 32);
+    assert.equal(result.x25519!.length, 32);
+  });
+
+  it('getPeerPublicKey returns null for unknown teeInstanceId', () => {
+    const result = db.getPeerPublicKey('nonexistent');
+    assert.equal(result, null);
+  });
+});
+
 describe('ProtocolDatabase — Pragmas', () => {
   beforeEach(setup);
   afterEach(teardown);

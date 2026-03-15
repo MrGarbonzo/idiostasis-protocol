@@ -10,7 +10,7 @@ import { AdmissionService } from './admission.js';
 import type { AdmissionRequest } from './admission.js';
 import { KeyExchangeSession } from '../vault/exchange.js';
 import { loadConfig } from '../config.js';
-import type { ProtocolConfig } from '../interfaces.js';
+import type { ProtocolConfig, AttestationProvider, AttestationResult } from '../interfaces.js';
 
 let db: ProtocolDatabase;
 let tmpDir: string;
@@ -172,5 +172,112 @@ describe('AdmissionService', () => {
     const events = db.getRecentEvents(1);
     assert.equal(events[0].eventType, 'admission');
     assert.ok(events[0].detail!.startsWith('backup:'));
+  });
+});
+
+describe('AdmissionService — attestation verification', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  function createMockProvider(overrides?: {
+    fetchQuote?: (domain: string) => Promise<string>;
+    verifyQuote?: (quote: string) => Promise<AttestationResult>;
+  }): AttestationProvider {
+    return {
+      fetchQuote: overrides?.fetchQuote ?? (async () => 'mock-quote-hex'),
+      verifyQuote: overrides?.verifyQuote ?? (async () => ({
+        rtmr3: 'guardian-rtmr3-abc',
+        valid: true,
+        tcbStatus: 'UpToDate',
+      })),
+    };
+  }
+
+  it('calls attestationProvider.fetchQuote with req.domain in production mode', async () => {
+    let capturedDomain = '';
+    const provider = createMockProvider({
+      fetchQuote: async (domain: string) => { capturedDomain = domain; return 'mock-quote'; },
+    });
+    const svc = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner, provider);
+    const req = await makeValidRequest('guardian', { domain: 'test.vm.scrtlabs.com', rtmr3: undefined });
+    await svc.handleAdmissionRequest(req);
+    assert.equal(capturedDomain, 'test.vm.scrtlabs.com');
+  });
+
+  it('returns attestation_failed if fetchQuote throws', async () => {
+    const provider = createMockProvider({
+      fetchQuote: async () => { throw new Error('network error'); },
+    });
+    const svc = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner, provider);
+    const req = await makeValidRequest('guardian', { domain: 'bad.vm.scrtlabs.com', rtmr3: undefined });
+    const result = await svc.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'attestation_failed');
+  });
+
+  it('returns attestation_invalid if verifyQuote returns valid: false', async () => {
+    const provider = createMockProvider({
+      verifyQuote: async () => ({ rtmr3: 'whatever', valid: false, tcbStatus: 'Revoked' }),
+    });
+    const svc = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner, provider);
+    const req = await makeValidRequest('guardian', { domain: 'revoked.vm.scrtlabs.com', rtmr3: undefined });
+    const result = await svc.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'attestation_invalid');
+  });
+
+  it('uses PCCS-verified RTMR3, not self-reported rtmr3', async () => {
+    const provider = createMockProvider({
+      verifyQuote: async () => ({ rtmr3: 'guardian-rtmr3-abc', valid: true, tcbStatus: 'UpToDate' }),
+    });
+    const svc = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner, provider);
+    // Self-reported rtmr3 is wrong, but PCCS returns the correct one
+    const req = await makeValidRequest('guardian', {
+      domain: 'verified.vm.scrtlabs.com',
+      rtmr3: 'wrong-self-reported-value',
+    });
+    const result = await svc.handleAdmissionRequest(req);
+    assert.equal(result.accepted, true);
+
+    // Verify DB record has PCCS-verified RTMR3, not self-reported
+    const guardian = db.getGuardian(req.teeInstanceId);
+    assert.equal(guardian!.rtmr3, 'guardian-rtmr3-abc');
+  });
+
+  it('skips attestation provider in DEV_MODE=true', async () => {
+    const original = process.env.DEV_MODE;
+    process.env.DEV_MODE = 'true';
+    try {
+      let providerCalled = false;
+      const provider = createMockProvider({
+        fetchQuote: async () => { providerCalled = true; return 'quote'; },
+      });
+      const svc = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner, provider);
+      const req = await makeValidRequest('guardian');
+      const result = await svc.handleAdmissionRequest(req);
+      assert.equal(result.accepted, true);
+      assert.equal(providerCalled, false, 'provider should not be called in DEV_MODE');
+    } finally {
+      if (original === undefined) delete process.env.DEV_MODE;
+      else process.env.DEV_MODE = original;
+    }
+  });
+
+  it('returns missing_domain if domain is empty in production mode', async () => {
+    const provider = createMockProvider();
+    const svc = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner, provider);
+    const req = await makeValidRequest('guardian', { domain: '', rtmr3: undefined });
+    const result = await svc.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'missing_domain');
+  });
+
+  it('returns missing_domain if domain is undefined in production mode', async () => {
+    const provider = createMockProvider();
+    const svc = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner, provider);
+    const req = await makeValidRequest('guardian', { domain: undefined, rtmr3: undefined });
+    const result = await svc.handleAdmissionRequest(req);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'missing_domain');
   });
 });

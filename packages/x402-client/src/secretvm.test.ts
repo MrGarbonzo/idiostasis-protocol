@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { SecretVmClient, stableStringify } from './secretvm.js';
 import type { EvmSigningWallet, SecretVmHttpClient } from './secretvm.js';
 import { X402Client } from './client.js';
-import type { SolanaWallet } from './types.js';
+import type { EvmWallet } from './types.js';
 
 function makeEvmWallet(): EvmSigningWallet {
   return {
@@ -15,10 +15,10 @@ function makeEvmWallet(): EvmSigningWallet {
   };
 }
 
-function makeSolanaWallet(): SolanaWallet {
+function makeX402Wallet(): EvmWallet {
   return {
-    publicKey: 'SoLaNaPuBkEy',
-    async signTransaction() { return 'signed'; },
+    address: '0xABCDEF1234567890ABCDEF1234567890ABCDEF12',
+    async signMessage(message: string) { return `sig:${message.slice(0, 16)}`; },
   };
 }
 
@@ -36,7 +36,7 @@ function sha256hex(input: string | Uint8Array): string {
 describe('SecretVmClient', () => {
   it('buildHeaders produces correct x-agent-address, x-agent-signature, x-agent-timestamp', async () => {
     const wallet = makeEvmWallet();
-    const x402 = new X402Client('http://rpc.test', makeSolanaWallet());
+    const x402 = new X402Client(makeX402Wallet());
     const client = new SecretVmClient(wallet, x402, 'http://localhost:3000');
 
     const headers = await client.buildHeaders('GET', '/api/agent/balance', '');
@@ -58,7 +58,7 @@ describe('SecretVmClient', () => {
 
   it('signing payload for createVm uses stableStringify of fields+file metadata, NOT raw form data', () => {
     const wallet = makeEvmWallet();
-    const x402 = new X402Client('http://rpc.test', makeSolanaWallet());
+    const x402 = new X402Client(makeX402Wallet());
     const client = new SecretVmClient(wallet, x402, 'http://localhost:3000');
 
     const composeYaml = 'version: "3"\nservices:\n  app:\n    image: test:latest\n';
@@ -111,7 +111,7 @@ describe('SecretVmClient', () => {
     };
 
     const wallet = makeEvmWallet();
-    const x402 = new X402Client('http://rpc.test', makeSolanaWallet());
+    const x402 = new X402Client(makeX402Wallet());
     const client = new SecretVmClient(wallet, x402, 'http://localhost:3000', http);
 
     const balance = await client.getBalance();
@@ -126,7 +126,7 @@ describe('SecretVmClient', () => {
       async fetch() {
         callCount++;
         if (callCount === 1) {
-          return makeResponse(402, { amount: 100, currency: 'USDC', payTo: 'addr' });
+          return makeResponse(402, { amount: 100, currency: 'USDC', payTo: '0xaddr' });
         }
         return makeResponse(200, { balance: '1000000' });
       },
@@ -139,7 +139,7 @@ describe('SecretVmClient', () => {
         return makeResponse(200, { paid: true });
       },
     };
-    const x402 = new X402Client('http://rpc.test', makeSolanaWallet(), x402Http);
+    const x402 = new X402Client(makeX402Wallet(), undefined, x402Http);
     const client = new SecretVmClient(makeEvmWallet(), x402, 'http://localhost:3000', http);
 
     await client.addFunds(1);
@@ -165,7 +165,7 @@ describe('SecretVmClient', () => {
       },
     };
 
-    const x402 = new X402Client('http://rpc.test', makeSolanaWallet());
+    const x402 = new X402Client(makeX402Wallet());
     const client = new SecretVmClient(makeEvmWallet(), x402, 'http://localhost:3000', http);
 
     const result = await client.pollUntilRunning('vm-1', 10, 5000);
@@ -184,7 +184,7 @@ describe('SecretVmClient', () => {
       },
     };
 
-    const x402 = new X402Client('http://rpc.test', makeSolanaWallet());
+    const x402 = new X402Client(makeX402Wallet());
     const client = new SecretVmClient(makeEvmWallet(), x402, 'http://localhost:3000', http);
 
     await assert.rejects(
@@ -194,5 +194,63 @@ describe('SecretVmClient', () => {
         return true;
       },
     );
+  });
+
+  it('stopVm calls DELETE /api/agent/vm/:id with signed headers', async () => {
+    let method = '';
+    let url = '';
+    const http: SecretVmHttpClient = {
+      async fetch(fetchUrl: string, init?: RequestInit) {
+        method = init?.method ?? 'GET';
+        url = fetchUrl;
+        return makeResponse(200);
+      },
+    };
+
+    const x402 = new X402Client(makeX402Wallet());
+    const client = new SecretVmClient(makeEvmWallet(), x402, 'http://localhost:3000', http);
+
+    await client.stopVm('vm-abc-123');
+    assert.equal(method, 'DELETE');
+    assert.ok(url.includes('/api/agent/vm/vm-abc-123'));
+  });
+
+  it('stopVm treats 404 as success (already stopped)', async () => {
+    const http: SecretVmHttpClient = {
+      async fetch() {
+        return makeResponse(404);
+      },
+    };
+
+    const x402 = new X402Client(makeX402Wallet());
+    const client = new SecretVmClient(makeEvmWallet(), x402, 'http://localhost:3000', http);
+
+    // Should not throw
+    await client.stopVm('vm-gone');
+  });
+
+  it('stopVm falls back to POST /stop on 405', async () => {
+    let callCount = 0;
+    let lastUrl = '';
+    let lastMethod = '';
+    const http: SecretVmHttpClient = {
+      async fetch(fetchUrl: string, init?: RequestInit) {
+        callCount++;
+        lastUrl = fetchUrl;
+        lastMethod = init?.method ?? 'GET';
+        if (callCount === 1) {
+          return makeResponse(405);
+        }
+        return makeResponse(200);
+      },
+    };
+
+    const x402 = new X402Client(makeX402Wallet());
+    const client = new SecretVmClient(makeEvmWallet(), x402, 'http://localhost:3000', http);
+
+    await client.stopVm('vm-legacy');
+    assert.equal(callCount, 2);
+    assert.equal(lastMethod, 'POST');
+    assert.ok(lastUrl.includes('/api/agent/vm/vm-legacy/stop'));
   });
 });

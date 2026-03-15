@@ -12,16 +12,18 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "tsx --test src/liveness/monitor.test.ts src/succession/handler.test.ts src/peers/registry.test.ts src/guardian-manager.test.ts",
+    "test": "tsx --test src/liveness/monitor.test.ts src/succession/handler.test.ts src/peers/registry.test.ts src/guardian-manager.test.ts src/guardian-http-server.test.ts",
     "lint": "echo \"No linter configured\" && exit 0"
   },
   "dependencies": {
     "@idiostasis/core": "*",
     "@idiostasis/erc8004-client": "*",
-    "better-sqlite3": "^12.8.0"
+    "better-sqlite3": "^12.8.0",
+    "express": "^4.21.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.0",
     "@types/node": "^25.5.0",
     "tsx": "^4.21.0",
     "typescript": "^5.8.0"

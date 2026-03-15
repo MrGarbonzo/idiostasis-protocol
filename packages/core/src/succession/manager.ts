@@ -5,6 +5,7 @@ import { SnapshotManager } from '../database/snapshot.js';
 import type { DbSnapshot } from '../database/snapshot.js';
 import { KeyExchangeSession } from '../vault/exchange.js';
 import type { WrappedKey } from '../vault/exchange.js';
+import type { VaultKeyManager } from '../vault/key-manager.js';
 import { selectSuccessor } from './selector.js';
 
 export class SuccessionExhaustedError extends Error {
@@ -217,36 +218,63 @@ export async function handleSuccessionReceive(
 }
 
 /**
+ * Transport function for sending rotated vault key to guardians.
+ */
+export type VaultKeyTransport = (
+  guardian: GuardianRecord,
+  wrappedKey: WrappedKey,
+  snapshot: DbSnapshot,
+  primaryX25519PublicKey: Uint8Array,
+) => Promise<boolean>;
+
+/**
  * Vault key rotation — called after new primary updates ERC-8004 (Decision 6).
  * Generates new vault key, re-encrypts DB, distributes to guardians.
- * Old key is zeroed after distribution confirmed.
+ * Old key is zeroed after distribution.
  */
 export async function rotateVaultKey(
   db: ProtocolDatabase,
+  oldVaultKey: Uint8Array,
+  vaultKeyManager: VaultKeyManager,
   guardians: GuardianRecord[],
   keyExchangeFn: (guardian: GuardianRecord) => Promise<{ session: KeyExchangeSession; sharedSecret: Uint8Array }>,
+  transport: VaultKeyTransport,
   signer: (data: Uint8Array) => Promise<Uint8Array>,
   teeInstanceId: string,
 ): Promise<Uint8Array> {
-  // Generate new vault key
+  // 1. Generate new vault key inside TEE
   const newVaultKey = new Uint8Array(randomBytes(32));
 
-  // Create snapshot with new key
+  // 2. Create snapshot re-encrypted with new key
   const snapshotMgr = new SnapshotManager(db, newVaultKey, teeInstanceId);
 
-  // Distribute to all guardians via key exchange
-  for (const guardian of guardians) {
+  // 3. Distribute to all active guardians via key exchange
+  const activeGuardians = guardians.filter(g => g.status === 'active');
+  for (const guardian of activeGuardians) {
     try {
       const { session, sharedSecret } = await keyExchangeFn(guardian);
       const wrappedKey = session.wrapVaultKey(newVaultKey, sharedSecret);
       const snapshot = await snapshotMgr.createSnapshot(signer);
-      // Transport to guardian is handled by caller (agent orchestration)
-      void wrappedKey;
-      void snapshot;
+      const sent = await transport(guardian, wrappedKey, snapshot, session.getPublicKeys().x25519);
+      if (sent) {
+        console.log(`[vault-rotation] distributed new key to guardian ${guardian.teeInstanceId}`);
+      } else {
+        console.warn(`[vault-rotation] guardian ${guardian.teeInstanceId} rejected key update`);
+      }
     } catch (err) {
       console.warn(`[vault-rotation] failed to distribute to guardian ${guardian.id}:`, err);
     }
   }
+
+  // 4. Zero old vault key in memory
+  oldVaultKey.fill(0);
+
+  // 5. Store new vault key via VaultKeyManager
+  vaultKeyManager.replaceKey(newVaultKey);
+  await vaultKeyManager.seal();
+
+  // 6. Log rotation event
+  db.logEvent(ProtocolEventType.VAULT_KEY_ROTATED);
 
   return newVaultKey;
 }

@@ -19,9 +19,12 @@ export interface RegistrationParams {
   description: string;
   services: ServiceRecord[];
   wallet: EvmWallet;
+  image?: string;
 }
 
 export interface EvmWallet {
   address: string;
   signTransaction(tx: unknown): Promise<string>;
+  /** Opaque viem Account object for contract interactions */
+  account: unknown;
 }

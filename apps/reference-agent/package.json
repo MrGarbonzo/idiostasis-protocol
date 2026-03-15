@@ -5,15 +5,20 @@
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "test": "echo \"No tests yet\" && exit 0",
+    "test": "tsx --test src/state/adapter.test.ts src/health/adapter.test.ts src/http/handlers.test.ts",
     "lint": "echo \"No linter configured\" && exit 0"
   },
   "dependencies": {
     "@idiostasis/core": "*",
     "@idiostasis/erc8004-client": "*",
-    "@idiostasis/x402-client": "*"
+    "@idiostasis/guardian": "*",
+    "@idiostasis/x402-client": "*",
+    "express": "^4.21.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.0"
   }
 }

@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { generateMnemonic, english } from 'viem/accounts';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { deriveSealingKey, sealData, unsealData } from './sealing.js';
@@ -8,7 +9,7 @@ const TEE_SEALED_PATH = '/dev/attestation/keys/vault-key';
 const FILE_SEALED_PATH = '/data/vault-key.sealed';
 
 export class VaultKeyManager {
-  private readonly key: Uint8Array;
+  private key: Uint8Array;
   private readonly firstBoot: boolean;
 
   private constructor(key: Uint8Array, firstBoot: boolean) {
@@ -61,6 +62,15 @@ export class VaultKeyManager {
     return this.firstBoot;
   }
 
+  /**
+   * Replace the in-memory vault key.
+   * Caller must call seal() explicitly after replacement.
+   * Used during vault key rotation on succession (Decision 6).
+   */
+  replaceKey(newKey: Uint8Array): void {
+    this.key = newKey;
+  }
+
   /** Seal vault key to the first writable path. */
   async seal(): Promise<void> {
     const sealingKey = await deriveSealingKey();
@@ -80,4 +90,16 @@ export class VaultKeyManager {
 
     throw new Error('vault: failed to seal key — no writable path available');
   }
+}
+
+/**
+ * Generate a new BIP39 mnemonic for the agent's EVM wallet.
+ * Called once on first boot inside the TEE.
+ * Stored encrypted in the protocol DB under CONFIG_KEYS.EVM_MNEMONIC.
+ * Survives succession via DB recovery — the new primary uses
+ * the same mnemonic and therefore the same EVM address.
+ * Never logged. Never in plaintext outside the encrypted DB.
+ */
+export function generateAgentMnemonic(): string {
+  return generateMnemonic(english);
 }

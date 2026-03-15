@@ -58,6 +58,14 @@ CREATE TABLE IF NOT EXISTS protocol_events (
   occurred_at INTEGER NOT NULL
 )`;
 
+export const CREATE_PEER_PUBLIC_KEYS_TABLE = `
+CREATE TABLE IF NOT EXISTS peer_public_keys (
+  tee_instance_id  TEXT PRIMARY KEY,
+  ed25519_pubkey   BLOB NOT NULL,
+  x25519_pubkey    BLOB,
+  stored_at        INTEGER NOT NULL
+)`;
+
 export function initializeSchema(db: Database): void {
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
@@ -69,4 +77,5 @@ export function initializeSchema(db: Database): void {
   db.exec(CREATE_AGENT_STATE_TABLE);
   db.exec(CREATE_USED_NONCES_TABLE);
   db.exec(CREATE_PROTOCOL_EVENTS_TABLE);
+  db.exec(CREATE_PEER_PUBLIC_KEYS_TABLE);
 }

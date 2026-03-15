@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { VaultKeyManager } from './key-manager.js';
+import { VaultKeyManager, generateAgentMnemonic } from './key-manager.js';
+import { mnemonicToAccount } from 'viem/accounts';
 import { deriveSealingKey, sealData, unsealData } from './sealing.js';
 import { randomBytes } from 'node:crypto';
 
@@ -16,6 +17,33 @@ describe('VaultKeyManager', () => {
   it('isFirstBoot() returns true when key was generated', async () => {
     const manager = await VaultKeyManager.load();
     assert.equal(manager.isFirstBoot(), true);
+  });
+});
+
+describe('generateAgentMnemonic', () => {
+  it('returns a string', () => {
+    const mnemonic = generateAgentMnemonic();
+    assert.equal(typeof mnemonic, 'string');
+    assert.ok(mnemonic.length > 0);
+  });
+
+  it('returns 12 words', () => {
+    const mnemonic = generateAgentMnemonic();
+    const words = mnemonic.split(' ');
+    assert.equal(words.length, 12);
+  });
+
+  it('returns different values on each call', () => {
+    const m1 = generateAgentMnemonic();
+    const m2 = generateAgentMnemonic();
+    assert.notEqual(m1, m2);
+  });
+
+  it('result is a valid BIP39 mnemonic (mnemonicToAccount does not throw)', () => {
+    const mnemonic = generateAgentMnemonic();
+    const account = mnemonicToAccount(mnemonic);
+    assert.ok(account.address.startsWith('0x'));
+    assert.equal(account.address.length, 42);
   });
 });
 

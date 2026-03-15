@@ -1,3 +1,11 @@
+import {
+  createPublicClient,
+  createWalletClient,
+  http,
+  type Account,
+  type Chain,
+} from 'viem';
+import { baseSepolia, base } from 'viem/chains';
 import type {
   AgentRegistration,
   ServiceRecord,
@@ -5,141 +13,111 @@ import type {
   EvmWallet,
 } from './types.js';
 
-// TODO: Replace with official ABI when ERC-8004 is deployed to Base mainnet.
-// This minimal ABI covers only the methods needed by the protocol.
-const ERC8004_MINIMAL_ABI = [
+// ERC-8004 Identity Registry ABI — matches deployed contract on Base.
+// Read by 8004scan.io — https://www.8004scan.io
+const IDENTITY_REGISTRY_ABI = [
   {
-    name: 'register',
-    type: 'function',
-    stateMutability: 'nonpayable',
-    inputs: [
-      { name: 'name', type: 'string' },
-      { name: 'description', type: 'string' },
-      { name: 'services', type: 'tuple[]', components: [
-        { name: 'name', type: 'string' },
-        { name: 'endpoint', type: 'string' },
-      ]},
-    ],
-    outputs: [{ name: 'tokenId', type: 'uint256' }],
+    type: 'function' as const,
+    name: 'register' as const,
+    inputs: [{ name: 'agentURI', type: 'string' as const }],
+    outputs: [{ name: 'agentId', type: 'uint256' as const }],
+    stateMutability: 'nonpayable' as const,
   },
   {
-    name: 'updateServiceEndpoint',
-    type: 'function',
-    stateMutability: 'nonpayable',
+    type: 'function' as const,
+    name: 'agentURI' as const,
+    inputs: [{ name: 'agentId', type: 'uint256' as const }],
+    outputs: [{ name: '', type: 'string' as const }],
+    stateMutability: 'view' as const,
+  },
+  {
+    type: 'function' as const,
+    name: 'ownerOf' as const,
+    inputs: [{ name: 'agentId', type: 'uint256' as const }],
+    outputs: [{ name: '', type: 'address' as const }],
+    stateMutability: 'view' as const,
+  },
+  {
+    type: 'function' as const,
+    name: 'setAgentURI' as const,
     inputs: [
-      { name: 'tokenId', type: 'uint256' },
-      { name: 'serviceName', type: 'string' },
-      { name: 'newEndpoint', type: 'string' },
+      { name: 'agentId', type: 'uint256' as const },
+      { name: 'agentURI', type: 'string' as const },
     ],
     outputs: [],
+    stateMutability: 'nonpayable' as const,
   },
   {
-    name: 'getRegistration',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
-    outputs: [
-      { name: 'owner', type: 'address' },
-      { name: 'name', type: 'string' },
-      { name: 'description', type: 'string' },
-      { name: 'services', type: 'tuple[]', components: [
-        { name: 'name', type: 'string' },
-        { name: 'endpoint', type: 'string' },
-      ]},
-      { name: 'active', type: 'bool' },
-      { name: 'registeredAt', type: 'uint256' },
-      { name: 'updatedAt', type: 'uint256' },
-    ],
-  },
-  {
-    name: 'isActive',
-    type: 'function',
-    stateMutability: 'view',
-    inputs: [{ name: 'tokenId', type: 'uint256' }],
-    outputs: [{ name: '', type: 'bool' }],
-  },
-  {
-    name: 'totalSupply',
-    type: 'function',
-    stateMutability: 'view',
+    type: 'function' as const,
+    name: 'totalSupply' as const,
     inputs: [],
-    outputs: [{ name: '', type: 'uint256' }],
+    outputs: [{ name: '', type: 'uint256' as const }],
+    stateMutability: 'view' as const,
   },
 ] as const;
 
-/**
- * Fetcher interface for making JSON-RPC calls.
- * Injected for testability — production uses global fetch against the RPC URL.
- */
-export interface RpcFetcher {
-  call(method: string, params: unknown[]): Promise<unknown>;
-  sendTransaction(data: string, wallet: EvmWallet): Promise<string>;
-}
+// ERC-721 Transfer event topic: keccak256("Transfer(address,address,uint256)")
+const TRANSFER_EVENT_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
 
-/**
- * Default RPC fetcher that uses the Base RPC URL.
- */
-export function createDefaultFetcher(rpcUrl: string): RpcFetcher {
-  return {
-    async call(method: string, params: unknown[]): Promise<unknown> {
-      const res = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method,
-          params,
-        }),
-      });
-      const data = await res.json() as { result?: unknown; error?: { message: string } };
-      if (data.error) throw new Error(`RPC error: ${data.error.message}`);
-      return data.result;
-    },
-    async sendTransaction(data: string, wallet: EvmWallet): Promise<string> {
-      const signed = await wallet.signTransaction({ data });
-      const res = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: 1,
-          method: 'eth_sendRawTransaction',
-          params: [signed],
-        }),
-      });
-      const result = await res.json() as { result?: string; error?: { message: string } };
-      if (result.error) throw new Error(`RPC error: ${result.error.message}`);
-      return result.result as string;
-    },
-  };
+// Official ERC-8004 Identity Registry — erc-8004/erc-8004-contracts
+// Read by 8004scan.io — https://www.8004scan.io
+export const ERC8004_REGISTRY_ADDRESS_BASE_SEPOLIA = '0x8004A818BFB912233c491871b3d84c89A494BD9e';
+
+// Base mainnet — saved for Phase 13 (mainnet deployment)
+export const ERC8004_REGISTRY_ADDRESS_BASE_MAINNET = '0x8004A169FB4a3325136EB29fA0ceB6D2e539a432';
+
+const CHAINS: Record<string, Chain> = {
+  'base-sepolia': baseSepolia,
+  'base': base,
+};
+
+interface AgentMetadata {
+  type: string;
+  name: string;
+  description: string;
+  image: string;
+  services: ServiceRecord[];
+  x402Support: boolean;
+  active: boolean;
+  supportedTrust: string[];
 }
 
 /**
  * Client for interacting with the ERC-8004 Identity Registry on Base.
- * This package has one job: read and write agent registrations.
- * It does not know about the Idiostasis protocol internals.
+ * Uses viem for all contract interactions.
+ * Metadata is stored as data URIs in tokenURI (ERC-721 + URIStorage pattern).
+ *
+ * TODO: migrate to IPFS/Arweave for production metadata storage.
  */
 export class ERC8004Client {
-  private readonly registryAddress: string;
-  private readonly fetcher: RpcFetcher;
+  protected readonly registryAddress: `0x${string}`;
+  protected readonly chainConfig: Chain;
+  protected readonly rpcUrl: string;
+  private readonly publicClient: ReturnType<typeof createPublicClient>;
 
-  constructor(baseRpcUrl: string, registryAddress: string, fetcher?: RpcFetcher) {
-    this.registryAddress = registryAddress;
-    this.fetcher = fetcher ?? createDefaultFetcher(baseRpcUrl);
+  constructor(
+    baseRpcUrl: string,
+    registryAddress: string,
+    chain: 'base-sepolia' | 'base' = 'base-sepolia',
+  ) {
+    this.rpcUrl = baseRpcUrl;
+    this.registryAddress = registryAddress as `0x${string}`;
+    this.chainConfig = CHAINS[chain] ?? baseSepolia;
+    this.publicClient = createPublicClient({
+      chain: this.chainConfig,
+      transport: http(baseRpcUrl || undefined),
+    });
   }
 
   async register(params: RegistrationParams): Promise<{ tokenId: number; txHash: string }> {
-    const { name, description, services, wallet } = params;
-    const calldata = encodeRegister(name, description, services);
-    const txHash = await this.fetcher.sendTransaction(
-      encodeTxData(this.registryAddress, calldata),
-      wallet,
-    );
+    const { name, description, services, wallet, image } = params;
+    const metadata = buildMetadata(name, description, services, image);
+    const dataUri = encodeMetadataToDataUri(metadata);
 
-    // Parse token ID from transaction receipt logs
-    const receipt = await this.waitForReceipt(txHash);
+    const txHash = await this.contractWrite('register', [dataUri], wallet);
+    const receipt = await this.txReceipt(txHash);
     const tokenId = parseTokenIdFromReceipt(receipt);
+
     return { tokenId, txHash };
   }
 
@@ -149,38 +127,61 @@ export class ERC8004Client {
     newEndpoint: string,
     wallet: EvmWallet,
   ): Promise<string> {
-    const calldata = encodeUpdateEndpoint(tokenId, serviceName, newEndpoint);
-    return this.fetcher.sendTransaction(
-      encodeTxData(this.registryAddress, calldata),
-      wallet,
-    );
+    const currentUri = await this.contractRead('agentURI', [BigInt(tokenId)]) as string;
+    const metadata = decodeDataUri(currentUri);
+    if (!metadata) throw new Error(`Cannot decode metadata for token ${tokenId}`);
+
+    const existing = metadata.services.find(s => s.name === serviceName);
+    if (existing) {
+      existing.endpoint = newEndpoint;
+    } else {
+      metadata.services.push({ name: serviceName, endpoint: newEndpoint });
+    }
+
+    const newUri = encodeMetadataToDataUri(metadata);
+    return this.contractWrite('setAgentURI', [BigInt(tokenId), newUri], wallet);
   }
 
   async getRegistration(tokenId: number): Promise<AgentRegistration | null> {
     try {
-      const calldata = encodeGetRegistration(tokenId);
-      const result = await this.fetcher.call('eth_call', [
-        { to: this.registryAddress, data: calldata },
-        'latest',
-      ]);
-      if (!result || result === '0x') return null;
-      return decodeRegistration(tokenId, result as string);
+      const uri = await this.contractRead('agentURI', [BigInt(tokenId)]) as string;
+      if (!uri) return null;
+      const metadata = decodeDataUri(uri);
+      if (!metadata) return null;
+
+      const owner = await this.contractRead('ownerOf', [BigInt(tokenId)]) as string;
+      return {
+        tokenId,
+        owner,
+        name: metadata.name,
+        description: metadata.description,
+        services: metadata.services,
+        active: metadata.active,
+        registeredAt: 0,
+        updatedAt: 0,
+      };
     } catch {
       return null;
     }
   }
 
   async findByRtmr3(rtmr3: string): Promise<AgentRegistration[]> {
-    // Scan all registrations and filter by workload service endpoint containing rtmr3
-    const results: AgentRegistration[] = [];
+    // TODO: use event indexing for production
     const totalSupply = await this.getTotalSupply();
+    const results: AgentRegistration[] = [];
 
-    for (let i = 1; i <= totalSupply; i++) {
-      const reg = await this.getRegistration(i);
-      if (!reg) continue;
-      const workloadService = reg.services.find(s => s.name === 'workload');
-      if (workloadService && workloadService.endpoint.includes(rtmr3)) {
-        results.push(reg);
+    // Scan in batches of 10 (parallel)
+    for (let start = 1; start <= totalSupply; start += 10) {
+      const end = Math.min(start + 9, totalSupply);
+      const batch = Array.from({ length: end - start + 1 }, (_, i) => start + i);
+      const regs = await Promise.all(batch.map(id => this.getRegistration(id)));
+
+      for (const reg of regs) {
+        if (!reg) continue;
+        const workloadService = reg.services.find(s => s.name === 'workload');
+        if (workloadService?.endpoint.includes(rtmr3)) {
+          results.push(reg);
+        }
       }
     }
     return results;
@@ -194,131 +195,91 @@ export class ERC8004Client {
   }
 
   async isActive(tokenId: number): Promise<boolean> {
-    try {
-      const calldata = encodeIsActive(tokenId);
-      const result = await this.fetcher.call('eth_call', [
-        { to: this.registryAddress, data: calldata },
-        'latest',
-      ]);
-      return decodeBool(result as string);
-    } catch {
-      return false;
-    }
+    const reg = await this.getRegistration(tokenId);
+    return reg?.active ?? false;
   }
 
   private async getTotalSupply(): Promise<number> {
-    // function selector for totalSupply()
-    const selector = '0x18160ddd';
-    const result = await this.fetcher.call('eth_call', [
-      { to: this.registryAddress, data: selector },
-      'latest',
-    ]);
-    return parseInt(result as string, 16);
+    const result = await this.contractRead('totalSupply', []);
+    return Number(result);
   }
 
-  private async waitForReceipt(txHash: string): Promise<TransactionReceipt> {
-    for (let i = 0; i < 60; i++) {
-      const receipt = await this.fetcher.call('eth_getTransactionReceipt', [txHash]);
-      if (receipt) return receipt as TransactionReceipt;
-      await new Promise(r => setTimeout(r, 2000));
-    }
-    throw new Error(`Transaction receipt timeout for ${txHash}`);
+  // --- Protected methods for testability ---
+
+  protected async contractRead(functionName: string, args: readonly unknown[]): Promise<unknown> {
+    return this.publicClient.readContract({
+      address: this.registryAddress,
+      abi: IDENTITY_REGISTRY_ABI,
+      functionName: functionName as any,
+      args: args as any,
+    });
+  }
+
+  protected async contractWrite(
+    functionName: string,
+    args: readonly unknown[],
+    wallet: EvmWallet,
+  ): Promise<`0x${string}`> {
+    const client = createWalletClient({
+      account: wallet.account as Account,
+      chain: this.chainConfig,
+      transport: http(this.rpcUrl || undefined),
+    });
+    return client.writeContract({
+      address: this.registryAddress,
+      abi: IDENTITY_REGISTRY_ABI,
+      functionName: functionName as any,
+      args: args as any,
+    });
+  }
+
+  protected async txReceipt(
+    hash: `0x${string}`,
+  ): Promise<{ logs: readonly { topics: readonly string[]; data: string }[] }> {
+    return this.publicClient.waitForTransactionReceipt({ hash }) as any;
   }
 }
 
-interface TransactionReceipt {
-  logs: Array<{ topics: string[]; data: string }>;
-  status: string;
-}
+// --- Metadata helpers ---
 
-// --- ABI encoding/decoding helpers ---
-
-function functionSelector(sig: string): string {
-  // Simple keccak256 of function signature — we use a precomputed approach
-  // since we don't want to pull in a full keccak dependency.
-  // These are the selectors for our known functions.
-  const selectors: Record<string, string> = {
-    'register(string,string,(string,string)[])': '0x00000001',
-    'updateServiceEndpoint(uint256,string,string)': '0x00000002',
-    'getRegistration(uint256)': '0x00000003',
-    'isActive(uint256)': '0x00000004',
+function buildMetadata(name: string, description: string, services: ServiceRecord[], image?: string): AgentMetadata {
+  return {
+    type: 'https://eips.ethereum.org/EIPS/eip-8004#registration-v1',
+    name,
+    description,
+    image: image ?? '',
+    services,
+    x402Support: true,
+    active: true,
+    supportedTrust: ['tee-attestation'],
   };
-  return selectors[sig] ?? '0x00000000';
 }
 
-function encodeRegister(name: string, description: string, services: ServiceRecord[]): string {
-  // TODO: Proper ABI encoding — placeholder for now
-  // In production, use viem's encodeFunctionData
-  return functionSelector('register(string,string,(string,string)[])') +
-    abiEncodeString(name) +
-    abiEncodeString(description) +
-    abiEncodeServices(services);
+export function encodeMetadataToDataUri(metadata: AgentMetadata): string {
+  const json = JSON.stringify(metadata);
+  const base64 = Buffer.from(json).toString('base64');
+  return `data:application/json;base64,${base64}`;
 }
 
-function encodeUpdateEndpoint(tokenId: number, serviceName: string, newEndpoint: string): string {
-  return functionSelector('updateServiceEndpoint(uint256,string,string)') +
-    abiEncodeUint256(tokenId) +
-    abiEncodeString(serviceName) +
-    abiEncodeString(newEndpoint);
-}
-
-function encodeGetRegistration(tokenId: number): string {
-  return functionSelector('getRegistration(uint256)') + abiEncodeUint256(tokenId);
-}
-
-function encodeIsActive(tokenId: number): string {
-  return functionSelector('isActive(uint256)') + abiEncodeUint256(tokenId);
-}
-
-function encodeTxData(to: string, calldata: string): string {
-  return JSON.stringify({ to, data: calldata });
-}
-
-function abiEncodeUint256(value: number): string {
-  return value.toString(16).padStart(64, '0');
-}
-
-function abiEncodeString(value: string): string {
-  const hex = Buffer.from(value, 'utf8').toString('hex');
-  const len = abiEncodeUint256(value.length);
-  const padded = hex.padEnd(Math.ceil(hex.length / 64) * 64, '0');
-  return len + padded;
-}
-
-function abiEncodeServices(services: ServiceRecord[]): string {
-  let result = abiEncodeUint256(services.length);
-  for (const s of services) {
-    result += abiEncodeString(s.name) + abiEncodeString(s.endpoint);
+export function decodeDataUri(dataUri: string): AgentMetadata | null {
+  const prefix = 'data:application/json;base64,';
+  if (!dataUri.startsWith(prefix)) return null;
+  try {
+    const base64 = dataUri.slice(prefix.length);
+    const json = Buffer.from(base64, 'base64').toString('utf-8');
+    return JSON.parse(json);
+  } catch {
+    return null;
   }
-  return result;
 }
 
-function decodeRegistration(tokenId: number, _hex: string): AgentRegistration {
-  // TODO: Proper ABI decoding — placeholder structure
-  // In production, use viem's decodeFunctionResult
-  // For now, this is handled by the mock fetcher in tests
-  throw new Error('NOT_IMPLEMENTED: raw ABI decoding — use mock fetcher for tests');
-}
-
-function decodeBool(hex: string): boolean {
-  const cleaned = hex.startsWith('0x') ? hex.slice(2) : hex;
-  return parseInt(cleaned, 16) !== 0;
-}
-
-function parseTokenIdFromReceipt(receipt: TransactionReceipt): number {
-  if (receipt.status !== '0x1') {
-    throw new Error('Transaction reverted');
-  }
-  // Transfer event topic0 for ERC-721: Transfer(address,address,uint256)
-  // Token ID is typically in the third topic (indexed) or data
+function parseTokenIdFromReceipt(
+  receipt: { logs: readonly { topics: readonly string[]; data: string }[] },
+): number {
   for (const log of receipt.logs) {
-    if (log.topics.length >= 4) {
-      return parseInt(log.topics[3], 16);
+    if (log.topics[0] === TRANSFER_EVENT_TOPIC && log.topics.length >= 4) {
+      return Number(BigInt(log.topics[3]));
     }
   }
-  // Fallback: check data field
-  if (receipt.logs.length > 0 && receipt.logs[0].data !== '0x') {
-    return parseInt(receipt.logs[0].data, 16);
-  }
-  throw new Error('Could not parse token ID from receipt');
+  throw new Error('No Transfer event found in transaction receipt');
 }

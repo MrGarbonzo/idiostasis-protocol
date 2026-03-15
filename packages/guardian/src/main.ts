@@ -10,7 +10,7 @@ import { LivenessMonitor } from './liveness/monitor.js';
 import { SuccessionHandler } from './succession/handler.js';
 import { PeerRegistry } from './peers/registry.js';
 import { Erc8004Discovery } from './discovery/erc8004.js';
-import { createHandlers } from './http-server.js';
+import { GuardianHttpServer } from './guardian-http-server.js';
 import type { AdmissionPayload } from './http-server.js';
 
 /**
@@ -23,7 +23,7 @@ import type { AdmissionPayload } from './http-server.js';
  * 4. Initialize PeerRegistry
  * 5. Initialize Erc8004Discovery (stub)
  * 6. Initialize LivenessMonitor and SuccessionHandler
- * 7. Set up HTTP handlers
+ * 7. Start Express HTTP server
  * 8. Log ready
  */
 export async function startGuardian(): Promise<void> {
@@ -32,6 +32,7 @@ export async function startGuardian(): Promise<void> {
   const dbPath = join(dataDir, 'guardian.db');
   const peersDbPath = join(dataDir, 'peers.db');
   const teeInstanceId = process.env.TEE_INSTANCE_ID ?? `dev-guardian-${Date.now()}`;
+  const port = parseInt(process.env.PORT ?? '3000', 10);
 
   // Guardian starts without vault key — receives it on admission
   let vaultKey: Uint8Array | null = null;
@@ -48,23 +49,32 @@ export async function startGuardian(): Promise<void> {
 
   const peerRegistry = new PeerRegistry(peersDbPath);
 
-  // ERC-8004 discovery — requires BASE_RPC_URL and ERC8004_REGISTRY_ADDRESS
+  // ERC-8004 discovery — requires BASE_RPC_URL, ERC8004_REGISTRY_ADDRESS, and ERC8004_TOKEN_ID
   const baseRpcUrl = process.env.BASE_RPC_URL ?? '';
   const registryAddress = process.env.ERC8004_REGISTRY_ADDRESS ?? '';
   const agentTokenId = parseInt(process.env.ERC8004_TOKEN_ID ?? '0', 10);
-  const erc8004Client = new ERC8004Client(baseRpcUrl, registryAddress);
-  const discovery = new Erc8004Discovery(erc8004Client, agentTokenId);
+  const baseNetwork = (process.env.BASE_NETWORK ?? 'base-sepolia') as 'base-sepolia' | 'base';
+
+  let discovery: Erc8004Discovery | null = null;
+  if (agentTokenId > 0 && baseRpcUrl) {
+    const erc8004Client = new ERC8004Client(baseRpcUrl, registryAddress, baseNetwork);
+    discovery = new Erc8004Discovery(erc8004Client, agentTokenId);
+    console.log(`[guardian] ERC-8004 discovery enabled for token ID ${agentTokenId}`);
+  } else {
+    console.warn('[guardian] ERC-8004 discovery disabled — ERC8004_TOKEN_ID or BASE_RPC_URL not set');
+  }
 
   // Dummy signer for now — real signing uses TEE Ed25519
   const dummySigner = async (_data: Uint8Array) => new Uint8Array(64);
 
-  // Placeholder ERC-8004 checker
+  // ERC-8004 checker for succession
   const erc8004Checker = {
     async getLivePrimaryAddress(): Promise<string | null> {
+      if (!discovery) return null;
       try {
         return await discovery.discoverPrimary();
       } catch {
-        return null; // Stub throws NOT_IMPLEMENTED
+        return null;
       }
     },
   };
@@ -96,6 +106,12 @@ export async function startGuardian(): Promise<void> {
     if (!vaultKey) {
       // TODO: Decrypt vault key from payload using key exchange
       console.log('[guardian] received admission — vault key provisioned');
+
+      // Store primary's Ed25519 public key for ping signature verification
+      if (payload.primaryEd25519PublicKey) {
+        liveness.setPrimaryPublicKey(payload.primaryEd25519PublicKey);
+        console.log('[guardian] primary Ed25519 public key stored for ping verification');
+      }
     }
   };
 
@@ -104,9 +120,10 @@ export async function startGuardian(): Promise<void> {
     return snapshotManager.createSnapshot(dummySigner);
   };
 
-  const handlers = createHandlers(liveness, onAdmission, snapshotProvider);
+  // Start Express HTTP server
+  const httpServer = new GuardianHttpServer(port, liveness, onAdmission, snapshotProvider);
+  await httpServer.start();
 
-  // TODO: Start Express HTTP server with handlers in Phase 6
   console.log(`[guardian] ready, teeInstanceId=${teeInstanceId}, waiting for primary admission`);
 }
 

@@ -16,4 +16,7 @@ export type { SecretVmClient, CreateVmParams } from './guardian-manager.js';
 export { createHandlers } from './http-server.js';
 export type { AdmissionPayload, OnAdmissionReceived, GuardianHttpHandlers } from './http-server.js';
 
+export { GuardianHttpServer } from './guardian-http-server.js';
+export type { VaultKeyUpdatePayload, OnVaultKeyUpdate } from './guardian-http-server.js';
+
 export { startGuardian } from './main.js';

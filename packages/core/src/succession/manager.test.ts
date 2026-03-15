@@ -5,11 +5,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ProtocolDatabase } from '../database/db.js';
-import { SuccessionManager, SuccessionExhaustedError } from './manager.js';
-import type { SuccessionTransport, CandidateReadyResponse, Erc8004Checker } from './manager.js';
+import { SuccessionManager, SuccessionExhaustedError, rotateVaultKey } from './manager.js';
+import type { SuccessionTransport, CandidateReadyResponse, Erc8004Checker, VaultKeyTransport } from './manager.js';
 import { loadConfig } from '../config.js';
 import { KeyExchangeSession } from '../vault/exchange.js';
-import type { BackupAgentRecord, ProtocolConfig } from '../interfaces.js';
+import { VaultKeyManager } from '../vault/key-manager.js';
+import type { BackupAgentRecord, GuardianRecord, ProtocolConfig } from '../interfaces.js';
 
 let db: ProtocolDatabase;
 let tmpDir: string;
@@ -197,5 +198,130 @@ describe('SuccessionManager', () => {
       async () => {}, checker);
 
     assert.equal(await mgr.checkAndStandDown('same.test:8080'), false);
+  });
+});
+
+function makeGuardianRecord(id: string, status: GuardianRecord['status'] = 'active'): GuardianRecord {
+  return {
+    id,
+    networkAddress: `${id}.test:8080`,
+    teeInstanceId: `tee-${id}`,
+    rtmr3: 'abc123',
+    admittedAt: new Date(),
+    lastAttestedAt: new Date(),
+    lastSeenAt: new Date(),
+    status,
+    provisionedBy: 'external',
+    agentVmId: null,
+  };
+}
+
+describe('rotateVaultKey', () => {
+  beforeEach(setup);
+  afterEach(teardown);
+
+  it('generates a new key different from old key', async () => {
+    const oldKey = new Uint8Array(randomBytes(32));
+    const oldKeyCopy = new Uint8Array(oldKey);
+    const vkm = await VaultKeyManager.load();
+    vkm.replaceKey(oldKey);
+
+    const newKey = await rotateVaultKey(
+      db, oldKey, vkm, [],
+      async () => { throw new Error('no guardians'); },
+      async () => true,
+      dummySigner, 'tee-test',
+    );
+
+    assert.notDeepStrictEqual(newKey, oldKeyCopy);
+    assert.equal(newKey.length, 32);
+  });
+
+  it('calls keyExchangeFn for each active guardian', async () => {
+    const g1 = makeGuardianRecord('g1', 'active');
+    const g2 = makeGuardianRecord('g2', 'active');
+    const oldKey = new Uint8Array(randomBytes(32));
+    const vkm = await VaultKeyManager.load();
+
+    const exchanged: string[] = [];
+    const keyExchangeFn = async (guardian: GuardianRecord) => {
+      exchanged.push(guardian.id);
+      const session = await KeyExchangeSession.generate();
+      const otherSession = await KeyExchangeSession.generate();
+      const sharedSecret = session.computeSharedSecret(otherSession.getPublicKeys().x25519);
+      return { session, sharedSecret };
+    };
+
+    const transport: VaultKeyTransport = async () => true;
+
+    await rotateVaultKey(db, oldKey, vkm, [g1, g2], keyExchangeFn, transport, dummySigner, 'tee-test');
+    assert.deepStrictEqual(exchanged, ['g1', 'g2']);
+  });
+
+  it('skips inactive guardians', async () => {
+    const active = makeGuardianRecord('g1', 'active');
+    const inactive = makeGuardianRecord('g2', 'inactive');
+    const oldKey = new Uint8Array(randomBytes(32));
+    const vkm = await VaultKeyManager.load();
+
+    const exchanged: string[] = [];
+    const keyExchangeFn = async (guardian: GuardianRecord) => {
+      exchanged.push(guardian.id);
+      const session = await KeyExchangeSession.generate();
+      const otherSession = await KeyExchangeSession.generate();
+      const sharedSecret = session.computeSharedSecret(otherSession.getPublicKeys().x25519);
+      return { session, sharedSecret };
+    };
+
+    await rotateVaultKey(db, oldKey, vkm, [active, inactive], keyExchangeFn, async () => true, dummySigner, 'tee-test');
+    assert.deepStrictEqual(exchanged, ['g1']);
+  });
+
+  it('zeros old vault key after distribution', async () => {
+    const oldKey = new Uint8Array(randomBytes(32));
+    const vkm = await VaultKeyManager.load();
+
+    await rotateVaultKey(db, oldKey, vkm, [], async () => { throw new Error(); }, async () => true, dummySigner, 'tee-test');
+
+    // Old key should be zeroed
+    assert.ok(oldKey.every(b => b === 0));
+  });
+
+  it('continues if one guardian distribution fails', async () => {
+    const g1 = makeGuardianRecord('g1', 'active');
+    const g2 = makeGuardianRecord('g2', 'active');
+    const oldKey = new Uint8Array(randomBytes(32));
+    const vkm = await VaultKeyManager.load();
+
+    let callCount = 0;
+    const keyExchangeFn = async (guardian: GuardianRecord) => {
+      callCount++;
+      if (guardian.id === 'g1') throw new Error('network error');
+      const session = await KeyExchangeSession.generate();
+      const otherSession = await KeyExchangeSession.generate();
+      const sharedSecret = session.computeSharedSecret(otherSession.getPublicKeys().x25519);
+      return { session, sharedSecret };
+    };
+
+    const transported: string[] = [];
+    const transport: VaultKeyTransport = async (guardian) => {
+      transported.push(guardian.id);
+      return true;
+    };
+
+    const newKey = await rotateVaultKey(db, oldKey, vkm, [g1, g2], keyExchangeFn, transport, dummySigner, 'tee-test');
+    assert.equal(callCount, 2);
+    assert.deepStrictEqual(transported, ['g2']); // g1 failed, g2 succeeded
+    assert.equal(newKey.length, 32);
+  });
+
+  it('VaultKeyManager.replaceKey updates in-memory key', async () => {
+    const vkm = await VaultKeyManager.load();
+    const originalKey = new Uint8Array(vkm.getKey());
+    const newKey = new Uint8Array(randomBytes(32));
+
+    vkm.replaceKey(newKey);
+    assert.deepStrictEqual(vkm.getKey(), newKey);
+    assert.notDeepStrictEqual(vkm.getKey(), originalKey);
   });
 });
