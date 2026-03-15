@@ -126,9 +126,3 @@ export async function startGuardian(): Promise<void> {
 
   console.log(`[guardian] ready, teeInstanceId=${teeInstanceId}, waiting for primary admission`);
 }
-
-// Auto-invoke when run directly
-startGuardian().catch((err) => {
-  console.error('[guardian] fatal:', err);
-  process.exit(1);
-});

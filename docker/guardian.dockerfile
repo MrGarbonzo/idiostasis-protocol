@@ -49,4 +49,4 @@ RUN mkdir -p /data
 
 EXPOSE 3000
 
-CMD ["node", "packages/guardian/dist/main.js"]
+CMD ["node", "packages/guardian/dist/run.js"]
