@@ -44,7 +44,10 @@ export class HttpServer {
     }));
 
     this.app.post('/api/admission', asyncWrap(async (req, res) => {
-      res.json(await handleAdmission(this.deps, req.body));
+      const sourceIp = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim()
+        ?? req.socket.remoteAddress
+        ?? '';
+      res.json(await handleAdmission(this.deps, req.body, sourceIp));
     }));
 
     this.app.get('/api/evm-address', asyncWrap(async (_req, res) => {

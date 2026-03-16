@@ -85,6 +85,7 @@ export async function handlePing(
 export async function handleAdmission(
   deps: HandlerDeps,
   body: unknown,
+  sourceIp: string = '',
 ): Promise<AdmissionResult> {
   if (!deps.admissionService) {
     return { accepted: false, reason: 'admission_service_not_initialized' };
@@ -95,13 +96,18 @@ export async function handleAdmission(
     return { accepted: false, reason: 'invalid_request' };
   }
 
+  // Resolve domain: prefer request-supplied domain, fall back to source IP
+  const resolvedDomain = (req.domain && req.domain !== 'localhost')
+    ? req.domain as string
+    : sourceIp;
+
   // Deserialize Uint8Array fields from base64 if they come as strings
   const admissionReq: AdmissionRequest = {
     role: req.role as 'guardian' | 'backup_agent',
     networkAddress: req.networkAddress as string,
     teeInstanceId: req.teeInstanceId as string,
     rtmr3: (req.rtmr3 as string) ?? undefined,
-    domain: (req.domain as string) ?? undefined,
+    domain: resolvedDomain || undefined,
     x25519PublicKey: deserializeKey(req.x25519PublicKey),
     ed25519PublicKey: deserializeKey(req.ed25519PublicKey),
     ed25519Signature: deserializeKey(req.ed25519Signature),

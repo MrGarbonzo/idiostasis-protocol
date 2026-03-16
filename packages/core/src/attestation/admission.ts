@@ -99,6 +99,9 @@ export class AdmissionService {
       }
 
       try {
+        console.log(
+          `[admission] fetching attestation from https://${req.domain}:29343/cpu.html`,
+        );
         const quote = await this.attestationProvider.fetchQuote(req.domain);
         const attestResult = await this.attestationProvider.verifyQuote(quote);
 

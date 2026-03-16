@@ -5,7 +5,6 @@ import {
   ProtocolDatabase,
   SnapshotManager,
   KeyExchangeSession,
-  resolveSecretvmDomain,
 } from '@idiostasis/core';
 import type { DbSnapshot, ProtocolConfig, WrappedKey } from '@idiostasis/core';
 import { ERC8004Client } from '@idiostasis/erc8004-client';
@@ -129,8 +128,7 @@ export async function startGuardian(): Promise<void> {
 
   console.log(`[guardian] ready, teeInstanceId=${teeInstanceId}, waiting for primary admission`);
 
-  // Resolve guardian's own domain for attestation
-  const ownDomain = await resolveSecretvmDomain();
+  const ownDomain = process.env.SECRETVM_DOMAIN ?? '(auto — agent uses source IP)';
   console.log(`[guardian] own domain: ${ownDomain}`);
 
   // Initiate admission to primary agent
@@ -139,7 +137,7 @@ export async function startGuardian(): Promise<void> {
 
   if (agentBaseUrl) {
     // Start admission in background — do not block server startup
-    initiateAdmission(agentBaseUrl, teeInstanceId, ownDomain, port, config)
+    initiateAdmission(agentBaseUrl, teeInstanceId, port, config)
       .catch(err => console.error('[guardian] admission initiation failed:', err));
   } else {
     console.warn(
@@ -152,7 +150,6 @@ export async function startGuardian(): Promise<void> {
 async function initiateAdmission(
   agentBaseUrl: string,
   teeInstanceId: string,
-  ownDomain: string,
   port: number,
   config: ProtocolConfig,
 ): Promise<void> {
@@ -178,9 +175,8 @@ async function initiateAdmission(
 
     const body = JSON.stringify({
       role: 'guardian',
-      networkAddress: `${ownDomain}:${port}`,
+      networkAddress: `${process.env.SECRETVM_DOMAIN ?? 'localhost'}:${port}`,
       teeInstanceId,
-      domain: ownDomain,
       nonce,
       timestamp,
       rtmr3: selfRtmr3,
