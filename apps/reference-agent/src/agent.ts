@@ -412,6 +412,16 @@ function devSign(data: Uint8Array): Uint8Array {
  * Priority: DB → env var (EVM_MNEMONIC) → legacy env var (EVM_PRIVATE_KEY) → TEE generation.
  * Mnemonic is stored encrypted in the DB (protected by vault key).
  * Survives succession via DB snapshot — same mnemonic = same address.
+ *
+ * IMPORTANT: Set EVM_MNEMONIC in usr/.env to preserve wallet
+ * identity across VM redeployments. Without it, each new VM
+ * generates a fresh mnemonic, orphaning the ERC-8004 token.
+ * Get the mnemonic from the DB on the current VM before
+ * redeploying:
+ *   docker exec idiostasis-agent node --input-type=module -e \
+ *   "import Database from 'better-sqlite3'; \
+ *    const db = new Database('/data/agent.db'); \
+ *    console.log(db.prepare(\"SELECT value FROM config WHERE key='evm_mnemonic'\").get()?.value);"
  */
 async function resolveEvmWallet(db: ProtocolDatabase): Promise<{ wallet: EvmWallet; mnemonic: string } | null> {
   // 1. Load mnemonic from DB (set on any previous boot)
