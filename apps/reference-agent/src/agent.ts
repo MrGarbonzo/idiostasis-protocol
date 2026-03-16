@@ -103,7 +103,7 @@ export class MoltbookAgent {
         if (process.env.DEV_MODE === 'true') return 'dev-measurement';
         try {
           const provider = new SecretLabsAttestationProvider(this.config.pccsEndpoints);
-          const quote = await provider.fetchQuote('localhost');
+          const quote = await provider.fetchQuote('172.17.0.1');
           const result = await provider.verifyQuote(quote);
           console.log(`[agent] self-attested RTMR3: ${result.rtmr3.slice(0, 16)}...`);
           return result.rtmr3;
