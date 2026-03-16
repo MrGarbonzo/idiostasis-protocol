@@ -46,7 +46,7 @@ export class MoltbookAgent {
   private admissionService: AdmissionService | null = null;
   private heartbeatManager: HeartbeatManager | null = null;
   private snapshotManager: SnapshotManager | null = null;
-  private agentRtmr3: string = 'dev-measurement';
+  private agentRtmr3: string = '';
   private erc8004Client: ERC8004Client | null = null;
   private erc8004TokenId: number | null = null;
   private evmWallet: EvmWallet | null = null;
@@ -96,9 +96,22 @@ export class MoltbookAgent {
     this.healthAdapter = new MoltbookHealthAdapter(this.stateAdapter, moltbookClient);
 
     // 7. Initialize RTMR3
+    // Priority: env var override → persisted DB value → self-attest via PCCS → dev fallback
     this.agentRtmr3 = process.env.AGENT_RTMR3
       ?? this.db.getConfig('agent_rtmr3')
-      ?? 'dev-measurement';
+      ?? await (async () => {
+        if (process.env.DEV_MODE === 'true') return 'dev-measurement';
+        try {
+          const provider = new SecretLabsAttestationProvider(this.config.pccsEndpoints);
+          const quote = await provider.fetchQuote(this.domain);
+          const result = await provider.verifyQuote(quote);
+          console.log(`[agent] self-attested RTMR3: ${result.rtmr3.slice(0, 16)}...`);
+          return result.rtmr3;
+        } catch (err) {
+          console.warn(`[agent] self-attestation failed, using dev fallback: ${err}`);
+          return 'dev-measurement';
+        }
+      })();
 
     if (!this.db.getConfig('agent_rtmr3')) {
       this.db.setConfig('agent_rtmr3', this.agentRtmr3);
