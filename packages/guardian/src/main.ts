@@ -158,29 +158,8 @@ async function initiateAdmission(
 ): Promise<void> {
   console.log(`[guardian] initiating admission to ${agentBaseUrl}`);
 
-  // Generate real X25519 + Ed25519 keypair using KeyExchangeSession
-  const session = await KeyExchangeSession.generate();
-  const { x25519, ed25519, signature } = session.getPublicKeys();
-
-  // Build admission request
-  const nonce = randomUUID();
-  const timestamp = Date.now();
-
   // Self-reported RTMR3 — read from TEE path or env var
   const selfRtmr3 = await readRtmr3();
-
-  const body = JSON.stringify({
-    role: 'guardian',
-    networkAddress: `${ownDomain}:${port}`,
-    teeInstanceId,
-    domain: ownDomain,
-    nonce,
-    timestamp,
-    rtmr3: selfRtmr3,
-    x25519PublicKey: Array.from(x25519),
-    ed25519PublicKey: Array.from(ed25519),
-    ed25519Signature: Array.from(signature),
-  });
 
   // Retry loop — agent may not be ready yet on first boot
   let attempts = 0;
@@ -189,6 +168,27 @@ async function initiateAdmission(
 
   while (attempts < maxAttempts) {
     attempts++;
+
+    // Generate fresh keypair, nonce, and timestamp for each attempt
+    // so the agent's nonce-replay check doesn't reject retries
+    const session = await KeyExchangeSession.generate();
+    const { x25519, ed25519, signature } = session.getPublicKeys();
+    const nonce = randomUUID();
+    const timestamp = Date.now();
+
+    const body = JSON.stringify({
+      role: 'guardian',
+      networkAddress: `${ownDomain}:${port}`,
+      teeInstanceId,
+      domain: ownDomain,
+      nonce,
+      timestamp,
+      rtmr3: selfRtmr3,
+      x25519PublicKey: Array.from(x25519),
+      ed25519PublicKey: Array.from(ed25519),
+      ed25519Signature: Array.from(signature),
+    });
+
     try {
       const res = await fetch(`${agentBaseUrl}/api/admission`, {
         method: 'POST',

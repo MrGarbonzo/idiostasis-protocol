@@ -52,17 +52,17 @@ export async function resolveTeeInstanceId(): Promise<string> {
 
 /**
  * Resolve this VM's SecretVM domain at runtime.
- * SecretVM sets hostname = domain prefix (e.g. "gold-ox").
- * Full domain = hostname + ".vm.scrtlabs.com"
  *
  * Priority:
- *   1. SECRETVM_DOMAIN env var (explicit override)
+ *   1. SECRETVM_DOMAIN env var (required on SecretVM — set in compose after deployment)
  *   2. /mnt/secure/self_report.txt — look for "domain:" or "vmDomain:" field
- *   3. os.hostname() + ".vm.scrtlabs.com"
- *   4. Dev fallback: "localhost"
+ *   3. Dev fallback: "localhost"
+ *
+ * Note: hostname-based detection was removed because SecretVM containers
+ * always have hostname "secret-vm-tdx", not the domain prefix.
  */
 export async function resolveSecretvmDomain(): Promise<string> {
-  // 1. Explicit env var override
+  // 1. Explicit env var — required on SecretVM
   const envDomain = process.env.SECRETVM_DOMAIN;
   if (envDomain) return envDomain;
 
@@ -73,18 +73,11 @@ export async function resolveSecretvmDomain(): Promise<string> {
     if (match?.[1]) return match[1];
   } catch { /* not available */ }
 
-  // 3. Hostname + suffix
-  try {
-    const host = hostname();
-    if (host.includes('.vm.scrtlabs.com')) return host;
-    // SecretVM prefixes look like "gold-ox" or "blush-sturgeon"
-    if (/^[a-z]+-[a-z]+$/.test(host)) {
-      return `${host}.vm.scrtlabs.com`;
-    }
-  } catch { /* hostname unavailable */ }
-
-  // 4. Dev fallback
-  console.warn('[tee] could not resolve SecretVM domain — using localhost');
+  // 3. Dev fallback
+  console.warn(
+    '[tee] SECRETVM_DOMAIN not set and could not be resolved — ' +
+    'using localhost. Set SECRETVM_DOMAIN in compose file after deployment.',
+  );
   return 'localhost';
 }
 
