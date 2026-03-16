@@ -10,7 +10,6 @@ import {
   handleDiscover,
   handleBackupReady,
   handleBackupConfirm,
-  handleRegisterErc8004,
 } from './handlers.js';
 
 type AsyncHandler = (req: Request, res: Response) => Promise<void>;
@@ -71,10 +70,6 @@ export class HttpServer {
 
     this.app.post('/api/backup/confirm', asyncWrap(async (req, res) => {
       res.json(await handleBackupConfirm(this.deps, req.body));
-    }));
-
-    this.app.post('/api/register-erc8004', asyncWrap(async (req, res) => {
-      res.json(await handleRegisterErc8004(this.deps, req.body));
     }));
 
     // Error handler

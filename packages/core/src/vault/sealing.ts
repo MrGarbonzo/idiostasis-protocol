@@ -64,7 +64,11 @@ export async function resolveSecretvmDomain(): Promise<string> {
   const envDomain = process.env.SECRETVM_DOMAIN;
   if (envDomain) return envDomain;
 
-  // 2. Parse CN from the VM's SSL certificate
+  // 2. Try TLS cert from SecretVM attestation server (port 29343)
+  const tlsDomain = await resolveSecretvmDomainFromTls();
+  if (tlsDomain) return tlsDomain;
+
+  // 3. Parse CN from the VM's SSL certificate file
   try {
     const cert = await readFile('/mnt/secure/cert/secret_vm_cert.pem');
     const x509 = new X509Certificate(cert);
@@ -72,16 +76,45 @@ export async function resolveSecretvmDomain(): Promise<string> {
     if (cn) return cn;
   } catch { /* cert not available */ }
 
-  // 3. Try self_report.txt for domain field
+  // 4. Try self_report.txt for domain field
   try {
     const report = await readFile('/mnt/secure/self_report.txt', 'utf-8');
     const match = report.match(/(?:vmDomain|domain):\s*([a-z0-9-]+\.vm\.scrtlabs\.com)/i);
     if (match?.[1]) return match[1];
   } catch { /* not available */ }
 
-  // 4. Dev fallback
+  // 5. Dev fallback
   console.warn('[tee] could not resolve SecretVM domain — using localhost');
   return 'localhost';
+}
+
+/**
+ * Resolve SecretVM domain by connecting to the attestation server TLS cert.
+ * Works from inside Docker containers via host gateway (172.17.0.1).
+ * Returns the CN if it matches *.vm.scrtlabs.com, null otherwise.
+ */
+export async function resolveSecretvmDomainFromTls(): Promise<string | null> {
+  return new Promise((resolve) => {
+    import('node:tls').then(tls => {
+      const socket = tls.connect(
+        { host: '172.17.0.1', port: 29343, rejectUnauthorized: false },
+        () => {
+          try {
+            const cert = socket.getPeerCertificate();
+            const rawCn = cert?.subject?.CN ?? null;
+            const cn = Array.isArray(rawCn) ? rawCn[0] : rawCn;
+            socket.destroy();
+            resolve(cn?.endsWith('.vm.scrtlabs.com') ? cn : null);
+          } catch {
+            socket.destroy();
+            resolve(null);
+          }
+        }
+      );
+      socket.on('error', () => resolve(null));
+      socket.setTimeout(5000, () => { socket.destroy(); resolve(null); });
+    });
+  });
 }
 
 /**

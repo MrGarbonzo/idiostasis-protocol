@@ -250,47 +250,6 @@ export async function handleBackupConfirm(
   return { ok: true };
 }
 
-export async function handleRegisterErc8004(
-  deps: HandlerDeps,
-  body: unknown,
-): Promise<{ ok: boolean; tokenId?: number; error?: string }> {
-  const req = body as Record<string, unknown>;
-  const domain = req.domain as string;
-
-  if (!domain || domain === 'localhost') {
-    return { ok: false, error: 'invalid domain' };
-  }
-  if (!deps.erc8004Client || !deps.evmWallet || !deps.db) {
-    return { ok: false, error: 'erc8004 not configured' };
-  }
-
-  const storedTokenId = deps.db.getConfig('erc8004_token_id');
-  if (storedTokenId) {
-    return { ok: true, tokenId: parseInt(storedTokenId, 10) };
-  }
-
-  try {
-    const result = await deps.erc8004Client.register({
-      name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
-      description: 'Idiostasis Protocol reference agent',
-      services: [
-        { name: 'teequote', endpoint: `https://${domain}:29343/cpu.html` },
-        { name: 'workload', endpoint: `https://${domain}/workload` },
-        { name: 'discovery', endpoint: `https://${domain}/discover` },
-      ],
-      image: process.env.AGENT_IMAGE_URL,
-      wallet: deps.evmWallet,
-    });
-    deps.db.setConfig('erc8004_token_id', String(result.tokenId));
-    deps.db.setConfig('erc8004_domain', domain);
-    console.log(`[agent] ERC-8004 registered. Token ID: ${result.tokenId}`);
-    return { ok: true, tokenId: result.tokenId };
-  } catch (err) {
-    console.error(`[agent] ERC-8004 registration failed: ${err}`);
-    return { ok: false, error: String(err) };
-  }
-}
-
 function deserializeKey(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (Buffer.isBuffer(value)) return new Uint8Array(value);
