@@ -51,7 +51,9 @@ export async function startGuardian(): Promise<void> {
 
   const peerRegistry = new PeerRegistry(peersDbPath);
 
-  // ERC-8004 discovery — requires BASE_RPC_URL, ERC8004_REGISTRY_ADDRESS, and ERC8004_TOKEN_ID
+  // ERC8004_TOKEN_ID: token ID of the agent in the ERC-8004 registry.
+  // Set this to enable registry-based discovery + succession handling.
+  // When not set, guardian falls back to AGENT_URL.
   const baseRpcUrl = process.env.BASE_RPC_URL ?? '';
   const registryAddress = process.env.ERC8004_REGISTRY_ADDRESS ?? '';
   const agentTokenId = parseInt(process.env.ERC8004_TOKEN_ID ?? '0', 10);
@@ -132,27 +134,44 @@ export async function startGuardian(): Promise<void> {
   console.log(`[guardian] own domain: ${ownDomain}`);
 
   // Initiate admission to primary agent
-  const agentUrl = process.env.AGENT_URL ?? '';
-  const agentBaseUrl = agentUrl; // AGENT_URL is the IP-based URL
+  const agentBaseUrl = await resolveAgentUrl(discovery);
 
   if (agentBaseUrl) {
     // Start admission in background — do not block server startup
-    initiateAdmission(agentBaseUrl, teeInstanceId, port, config)
+    initiateAdmission(agentBaseUrl, teeInstanceId, port, config, discovery)
       .catch(err => console.error('[guardian] admission initiation failed:', err));
   } else {
     console.warn(
-      '[guardian] AGENT_URL not set — ' +
+      '[guardian] AGENT_URL not set and ERC-8004 discovery failed — ' +
       'admission must be triggered manually',
     );
   }
 }
 
+async function resolveAgentUrl(discovery: Erc8004Discovery | null): Promise<string> {
+  if (discovery) {
+    try {
+      const discovered = await discovery.discoverPrimary();
+      if (discovered) {
+        console.log(`[guardian] discovered agent via ERC-8004: ${discovered}`);
+        return discovered;
+      }
+      console.warn('[guardian] ERC-8004 discovery returned null — falling back to AGENT_URL');
+    } catch (err) {
+      console.warn(`[guardian] ERC-8004 discovery failed: ${err} — falling back to AGENT_URL`);
+    }
+  }
+  return process.env.AGENT_URL ?? '';
+}
+
 async function initiateAdmission(
-  agentBaseUrl: string,
+  initialAgentBaseUrl: string,
   teeInstanceId: string,
   port: number,
   config: ProtocolConfig,
+  discovery: Erc8004Discovery | null,
 ): Promise<void> {
+  let agentBaseUrl = initialAgentBaseUrl;
   console.log(`[guardian] initiating admission to ${agentBaseUrl}`);
 
   // Self-reported RTMR3 — read from TEE path or env var
@@ -216,6 +235,16 @@ async function initiateAdmission(
       if (result.reason === 'rtmr3_mismatch' ||
           result.reason === 'invalid_signature' ||
           result.reason === 'missing_domain') {
+        // Try re-discovering via ERC-8004 in case the primary changed
+        if (result.reason === 'rtmr3_mismatch' && discovery) {
+          console.log('[guardian] hard-rejected — attempting ERC-8004 rediscovery');
+          const rediscovered = await discovery.discoverPrimary().catch(() => null);
+          if (rediscovered && rediscovered !== agentBaseUrl) {
+            console.log(`[guardian] found new primary at ${rediscovered} — restarting admission`);
+            agentBaseUrl = rediscovered;
+            continue;
+          }
+        }
         console.error(
           '[guardian] admission hard-rejected — ' +
           'fix configuration and redeploy',

@@ -44,6 +44,7 @@ export interface HandlerDeps {
   vaultKeyManager?: VaultKeyManager;
   config?: ProtocolConfig;
   signer?: (data: Uint8Array) => Promise<Uint8Array>;
+  domain?: string;
 }
 
 export async function handleStatus(deps: HandlerDeps): Promise<StatusResponse> {
@@ -233,7 +234,9 @@ export async function handleBackupConfirm(
   // Update ERC-8004 registry endpoint after succession
   if (deps.erc8004Client && deps.erc8004TokenId && deps.evmWallet) {
     try {
-      const newEndpoint = `http://localhost:${process.env.PORT ?? '3001'}/discover`;
+      const newEndpoint = deps.domain && deps.domain !== 'localhost'
+        ? `https://${deps.domain}/discover`
+        : `http://localhost:${process.env.PORT ?? '3001'}/discover`;
       await deps.erc8004Client.updateEndpoint(
         deps.erc8004TokenId, 'discovery', newEndpoint, deps.evmWallet,
       );
