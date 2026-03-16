@@ -20,6 +20,7 @@ export const CONFIG_KEYS = {
   AGENT_RTMR3: 'agent_rtmr3',
   ERC8004_TOKEN_ID: 'erc8004_token_id',
   EVM_MNEMONIC: 'evm_mnemonic',
+  GUARDIAN_RTMR3: 'guardian_rtmr3',
   EXTERNAL_STABLE_SINCE: 'external_stable_since',
   SNAPSHOT_SEQUENCE_NUM: 'snapshot_sequence_num',
 } as const;

@@ -121,8 +121,39 @@ export class AdmissionService {
 
     // Check verifiedRtmr3 against approved list
     if (req.role === 'guardian') {
-      if (!this.config.guardianApprovedRtmr3.includes(verifiedRtmr3)) {
-        return { accepted: false, reason: 'rtmr3_mismatch' };
+      const approvedGuardianRtmr3 = this.config.guardianApprovedRtmr3;
+
+      if (approvedGuardianRtmr3.length === 0) {
+        // No approved RTMR3 set yet — first guardian locks it
+        const locked = this.db.getConfig('guardian_rtmr3');
+        if (!locked) {
+          // First guardian ever — lock its RTMR3 as canonical
+          this.db.setConfig('guardian_rtmr3', verifiedRtmr3);
+          console.warn(
+            `[admission] FIRST GUARDIAN: locking guardian RTMR3 to ` +
+            `${verifiedRtmr3.slice(0, 16)}... ` +
+            `teeInstanceId=${req.teeInstanceId}`,
+          );
+          // Continue — this guardian is admitted
+        } else if (locked !== verifiedRtmr3) {
+          // Subsequent guardian — must match the locked value
+          console.warn(
+            `[admission] guardian RTMR3 mismatch: ` +
+            `expected ${locked.slice(0, 16)}... ` +
+            `got ${verifiedRtmr3.slice(0, 16)}...`,
+          );
+          return { accepted: false, reason: 'rtmr3_mismatch' };
+        }
+        // locked === verifiedRtmr3 — matches, continue
+      } else {
+        // Explicit approved list set — require match
+        const locked = this.db.getConfig('guardian_rtmr3');
+        const fullList = locked
+          ? [...approvedGuardianRtmr3, locked]
+          : approvedGuardianRtmr3;
+        if (!fullList.includes(verifiedRtmr3)) {
+          return { accepted: false, reason: 'rtmr3_mismatch' };
+        }
       }
     } else {
       const agentRtmr3 = this.db.getConfig('agent_rtmr3');

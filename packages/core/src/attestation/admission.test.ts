@@ -175,6 +175,85 @@ describe('AdmissionService', () => {
   });
 });
 
+describe('AdmissionService — guardian RTMR3 auto-lock', () => {
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'idiostasis-adm-'));
+    vaultKey = new Uint8Array(randomBytes(32));
+    db = new ProtocolDatabase(join(tmpDir, 'test.db'), vaultKey);
+    // Empty approved list — triggers auto-lock behavior
+    config = loadConfig({
+      GUARDIAN_APPROVED_RTMR3: '',
+      AGENT_APPROVED_RTMR3: 'agent-rtmr3-xyz',
+    });
+    db.setConfig('agent_rtmr3', 'agent-rtmr3-xyz');
+    snapshotManager = new SnapshotManager(db, vaultKey, 'primary-tee');
+    admissionService = new AdmissionService(db, config, vaultKey, snapshotManager, dummySigner);
+  });
+  afterEach(teardown);
+
+  it('empty approved list + first guardian: accepted, RTMR3 stored in DB', async () => {
+    const req = await makeValidRequest('guardian', { rtmr3: 'first-guardian-rtmr3' });
+    const result = await admissionService.handleAdmissionRequest(req);
+    assert.equal(result.accepted, true);
+    assert.equal(db.getConfig('guardian_rtmr3'), 'first-guardian-rtmr3');
+  });
+
+  it('empty approved list + second guardian matching locked value: accepted', async () => {
+    // First guardian locks
+    const req1 = await makeValidRequest('guardian', { rtmr3: 'locked-rtmr3' });
+    await admissionService.handleAdmissionRequest(req1);
+
+    // Second guardian with same RTMR3
+    const req2 = await makeValidRequest('guardian', { rtmr3: 'locked-rtmr3' });
+    const result = await admissionService.handleAdmissionRequest(req2);
+    assert.equal(result.accepted, true);
+  });
+
+  it('empty approved list + second guardian with different RTMR3: rejected', async () => {
+    // First guardian locks
+    const req1 = await makeValidRequest('guardian', { rtmr3: 'locked-rtmr3' });
+    await admissionService.handleAdmissionRequest(req1);
+
+    // Second guardian with different RTMR3
+    const req2 = await makeValidRequest('guardian', { rtmr3: 'different-rtmr3' });
+    const result = await admissionService.handleAdmissionRequest(req2);
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'rtmr3_mismatch');
+  });
+
+  it('non-empty approved list: existing behavior unchanged', async () => {
+    // Reconfigure with explicit list
+    const explicitConfig = loadConfig({
+      GUARDIAN_APPROVED_RTMR3: 'explicit-rtmr3',
+      AGENT_APPROVED_RTMR3: 'agent-rtmr3-xyz',
+    });
+    const svc = new AdmissionService(db, explicitConfig, vaultKey, snapshotManager, dummySigner);
+
+    const req = await makeValidRequest('guardian', { rtmr3: 'explicit-rtmr3' });
+    const result = await svc.handleAdmissionRequest(req);
+    assert.equal(result.accepted, true);
+
+    // DB should NOT have guardian_rtmr3 set (auto-lock is only for empty list)
+    assert.equal(db.getConfig('guardian_rtmr3'), null);
+  });
+
+  it('first guardian lock logs WARN with teeInstanceId', async () => {
+    const warnings: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => { warnings.push(args.join(' ')); };
+    try {
+      const req = await makeValidRequest('guardian', { rtmr3: 'log-test-rtmr3' });
+      await admissionService.handleAdmissionRequest(req);
+      const lockLog = warnings.find(w => w.includes('FIRST GUARDIAN'));
+      assert.ok(lockLog, 'should log FIRST GUARDIAN warning');
+      assert.ok(lockLog!.includes(req.teeInstanceId), 'log should include teeInstanceId');
+      assert.ok(lockLog!.includes('log-test-rtmr3'.slice(0, 16)), 'log should include RTMR3 prefix');
+    } finally {
+      console.warn = origWarn;
+    }
+  });
+});
+
 describe('AdmissionService — attestation verification', () => {
   beforeEach(setup);
   afterEach(teardown);
