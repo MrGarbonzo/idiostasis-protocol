@@ -24,7 +24,6 @@ const mockWallet: EvmWallet = {
 class TestableERC8004Client extends ERC8004Client {
   mockTokenURIs = new Map<number, string>();
   mockOwners = new Map<number, string>();
-  mockTotalSupply = 0;
   writeCalls: Array<{ fn: string; args: unknown[] }> = [];
   mockReceiptTokenId = 1;
   readCallLog: Array<{ fn: string; args: unknown[] }> = [];
@@ -50,7 +49,7 @@ class TestableERC8004Client extends ERC8004Client {
 
   protected async contractRead(fn: string, args: readonly unknown[]): Promise<unknown> {
     this.readCallLog.push({ fn, args: [...args] });
-    if (fn === 'agentURI') {
+    if (fn === 'tokenURI') {
       const tokenId = Number(args[0]);
       const uri = this.mockTokenURIs.get(tokenId);
       if (uri === undefined) throw new Error('ERC721: invalid token ID');
@@ -61,9 +60,6 @@ class TestableERC8004Client extends ERC8004Client {
       const owner = this.mockOwners.get(tokenId);
       if (!owner) throw new Error('ERC721: invalid token ID');
       return owner;
-    }
-    if (fn === 'totalSupply') {
-      return BigInt(this.mockTotalSupply);
     }
     throw new Error(`Unexpected contractRead: ${fn}`);
   }
@@ -172,7 +168,7 @@ describe('updateEndpoint', () => {
     await client.updateEndpoint(5, 'discovery', 'https://new.test/discover', mockWallet);
 
     assert.equal(client.writeCalls.length, 1);
-    assert.equal(client.writeCalls[0].fn, 'setAgentURI');
+    assert.equal(client.writeCalls[0].fn, 'setTokenURI');
     const newUri = client.writeCalls[0].args[1] as string;
     const metadata = decodeDataUri(newUri);
     assert.ok(metadata);
@@ -244,53 +240,9 @@ describe('getRegistration', () => {
 });
 
 describe('findByRtmr3', () => {
-  it('filters by workload service endpoint content', async () => {
-    client.mockTotalSupply = 3;
-    client.setMockRegistration(1, {
-      name: 'a1',
-      description: '',
-      services: [
-        { name: 'workload', endpoint: 'https://a1.test/workload?rtmr3=abc123' },
-      ],
-    });
-    client.setMockRegistration(2, {
-      name: 'a2',
-      description: '',
-      services: [
-        { name: 'workload', endpoint: 'https://a2.test/workload?rtmr3=def456' },
-      ],
-    });
-    client.setMockRegistration(3, {
-      name: 'a3',
-      description: '',
-      services: [
-        { name: 'workload', endpoint: 'https://a3.test/workload?rtmr3=abc123' },
-      ],
-    });
-
+  it('returns empty array (stub — requires event indexing)', async () => {
     const results = await client.findByRtmr3('abc123');
-    assert.equal(results.length, 2);
-    assert.ok(results.some(r => r.tokenId === 1));
-    assert.ok(results.some(r => r.tokenId === 3));
-  });
-
-  it('scans in batches of 10 (parallel calls)', async () => {
-    client.mockTotalSupply = 15;
-    for (let i = 1; i <= 15; i++) {
-      client.setMockRegistration(i, {
-        name: `a${i}`,
-        description: '',
-        services: [
-          { name: 'workload', endpoint: `https://a${i}.test/workload?rtmr3=target` },
-        ],
-      });
-    }
-
-    const results = await client.findByRtmr3('target');
-    assert.equal(results.length, 15);
-    // Verify all 15 tokenURIs were read (batch 1: 1-10, batch 2: 11-15)
-    const agentUriReads = client.readCallLog.filter(c => c.fn === 'agentURI');
-    assert.equal(agentUriReads.length, 15);
+    assert.equal(results.length, 0);
   });
 });
 

@@ -25,34 +25,27 @@ const IDENTITY_REGISTRY_ABI = [
   },
   {
     type: 'function' as const,
-    name: 'agentURI' as const,
-    inputs: [{ name: 'agentId', type: 'uint256' as const }],
+    name: 'tokenURI' as const,
+    inputs: [{ name: 'tokenId', type: 'uint256' as const }],
     outputs: [{ name: '', type: 'string' as const }],
     stateMutability: 'view' as const,
   },
   {
     type: 'function' as const,
     name: 'ownerOf' as const,
-    inputs: [{ name: 'agentId', type: 'uint256' as const }],
+    inputs: [{ name: 'tokenId', type: 'uint256' as const }],
     outputs: [{ name: '', type: 'address' as const }],
     stateMutability: 'view' as const,
   },
   {
     type: 'function' as const,
-    name: 'setAgentURI' as const,
+    name: 'setTokenURI' as const,
     inputs: [
-      { name: 'agentId', type: 'uint256' as const },
-      { name: 'agentURI', type: 'string' as const },
+      { name: 'tokenId', type: 'uint256' as const },
+      { name: 'tokenURI', type: 'string' as const },
     ],
     outputs: [],
     stateMutability: 'nonpayable' as const,
-  },
-  {
-    type: 'function' as const,
-    name: 'totalSupply' as const,
-    inputs: [],
-    outputs: [{ name: '', type: 'uint256' as const }],
-    stateMutability: 'view' as const,
   },
 ] as const;
 
@@ -127,7 +120,7 @@ export class ERC8004Client {
     newEndpoint: string,
     wallet: EvmWallet,
   ): Promise<string> {
-    const currentUri = await this.contractRead('agentURI', [BigInt(tokenId)]) as string;
+    const currentUri = await this.contractRead('tokenURI', [BigInt(tokenId)]) as string;
     const metadata = decodeDataUri(currentUri);
     if (!metadata) throw new Error(`Cannot decode metadata for token ${tokenId}`);
 
@@ -139,12 +132,12 @@ export class ERC8004Client {
     }
 
     const newUri = encodeMetadataToDataUri(metadata);
-    return this.contractWrite('setAgentURI', [BigInt(tokenId), newUri], wallet);
+    return this.contractWrite('setTokenURI', [BigInt(tokenId), newUri], wallet);
   }
 
   async getRegistration(tokenId: number): Promise<AgentRegistration | null> {
     try {
-      const uri = await this.contractRead('agentURI', [BigInt(tokenId)]) as string;
+      const uri = await this.contractRead('tokenURI', [BigInt(tokenId)]) as string;
       if (!uri) return null;
       const metadata = decodeDataUri(uri);
       if (!metadata) return null;
@@ -165,26 +158,10 @@ export class ERC8004Client {
     }
   }
 
-  async findByRtmr3(rtmr3: string): Promise<AgentRegistration[]> {
-    // TODO: use event indexing for production
-    const totalSupply = await this.getTotalSupply();
-    const results: AgentRegistration[] = [];
-
-    // Scan in batches of 10 (parallel)
-    for (let start = 1; start <= totalSupply; start += 10) {
-      const end = Math.min(start + 9, totalSupply);
-      const batch = Array.from({ length: end - start + 1 }, (_, i) => start + i);
-      const regs = await Promise.all(batch.map(id => this.getRegistration(id)));
-
-      for (const reg of regs) {
-        if (!reg) continue;
-        const workloadService = reg.services.find(s => s.name === 'workload');
-        if (workloadService?.endpoint.includes(rtmr3)) {
-          results.push(reg);
-        }
-      }
-    }
-    return results;
+  async findByRtmr3(_rtmr3: string): Promise<AgentRegistration[]> {
+    // TODO: use event indexing — contract does not expose totalSupply
+    console.warn('[erc8004] findByRtmr3 not implemented — requires event indexing');
+    return [];
   }
 
   async getLivePrimaryAddress(tokenId: number): Promise<string | null> {
@@ -197,11 +174,6 @@ export class ERC8004Client {
   async isActive(tokenId: number): Promise<boolean> {
     const reg = await this.getRegistration(tokenId);
     return reg?.active ?? false;
-  }
-
-  private async getTotalSupply(): Promise<number> {
-    const result = await this.contractRead('totalSupply', []);
-    return Number(result);
   }
 
   // --- Protected methods for testability ---
