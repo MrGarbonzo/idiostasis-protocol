@@ -8,6 +8,7 @@ import {
   AdmissionService,
   HeartbeatManager,
   resolveTeeInstanceId,
+  resolveSecretvmDomain,
   SecretLabsAttestationProvider,
   generateAgentMnemonic,
   CONFIG_KEYS,
@@ -39,6 +40,7 @@ export class MoltbookAgent {
   private db: ProtocolDatabase | null = null;
   private vaultKeyManager: VaultKeyManager | null = null;
   private teeInstanceId: string = '';
+  private domain: string = '';
   private role: string = 'unknown';
   private startTime: number = Date.now();
   private admissionService: AdmissionService | null = null;
@@ -61,8 +63,10 @@ export class MoltbookAgent {
     this.vaultKeyManager = await VaultKeyManager.load();
     const vaultKey = this.vaultKeyManager.getKey();
 
-    // 2. Resolve TEE identity
+    // 2. Resolve TEE identity and domain
     this.teeInstanceId = await resolveTeeInstanceId();
+    this.domain = await resolveSecretvmDomain();
+    console.log(`[agent] domain: ${this.domain}`);
 
     // 3. Determine role
     this.role = this.vaultKeyManager.isFirstBoot() ? 'primary' : 'primary';
@@ -156,7 +160,7 @@ export class MoltbookAgent {
     const storedTokenId = this.db.getConfig('erc8004_token_id');
     if (!storedTokenId && this.evmWallet && baseRpcUrl) {
       try {
-        const domain = process.env.CLOUDFLARE_DOMAIN ?? 'localhost:3001';
+        const domain = this.domain;
         const result = await this.erc8004Client.register({
           name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
           description: 'Idiostasis Protocol reference agent',

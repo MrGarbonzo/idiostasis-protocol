@@ -51,6 +51,44 @@ export async function resolveTeeInstanceId(): Promise<string> {
 }
 
 /**
+ * Resolve this VM's SecretVM domain at runtime.
+ * SecretVM sets hostname = domain prefix (e.g. "gold-ox").
+ * Full domain = hostname + ".vm.scrtlabs.com"
+ *
+ * Priority:
+ *   1. SECRETVM_DOMAIN env var (explicit override)
+ *   2. /mnt/secure/self_report.txt — look for "domain:" or "vmDomain:" field
+ *   3. os.hostname() + ".vm.scrtlabs.com"
+ *   4. Dev fallback: "localhost"
+ */
+export async function resolveSecretvmDomain(): Promise<string> {
+  // 1. Explicit env var override
+  const envDomain = process.env.SECRETVM_DOMAIN;
+  if (envDomain) return envDomain;
+
+  // 2. Try self_report.txt for domain field
+  try {
+    const report = await readFile('/mnt/secure/self_report.txt', 'utf-8');
+    const match = report.match(/(?:vmDomain|domain):\s*([a-z0-9-]+\.vm\.scrtlabs\.com)/i);
+    if (match?.[1]) return match[1];
+  } catch { /* not available */ }
+
+  // 3. Hostname + suffix
+  try {
+    const host = hostname();
+    if (host.includes('.vm.scrtlabs.com')) return host;
+    // SecretVM prefixes look like "gold-ox" or "blush-sturgeon"
+    if (/^[a-z]+-[a-z]+$/.test(host)) {
+      return `${host}.vm.scrtlabs.com`;
+    }
+  } catch { /* hostname unavailable */ }
+
+  // 4. Dev fallback
+  console.warn('[tee] could not resolve SecretVM domain — using localhost');
+  return 'localhost';
+}
+
+/**
  * Derive sealing key from teeInstanceId (Decision 1).
  * SHA256("idiostasis-vault-seal-v1|{teeInstanceId}")
  */

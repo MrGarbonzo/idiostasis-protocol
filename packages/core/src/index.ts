@@ -28,7 +28,7 @@ export {
 
 // Vault key lifecycle
 export { VaultKeyManager, generateAgentMnemonic } from './vault/key-manager.js';
-export { deriveSealingKey, sealData, unsealData, resolveTeeInstanceId } from './vault/sealing.js';
+export { deriveSealingKey, sealData, unsealData, resolveTeeInstanceId, resolveSecretvmDomain } from './vault/sealing.js';
 export type { SealedData } from './vault/sealing.js';
 export { KeyExchangeSession } from './vault/exchange.js';
 export type { WrappedKey, PublicKeys } from './vault/exchange.js';

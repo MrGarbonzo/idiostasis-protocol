@@ -5,6 +5,7 @@ import {
   ProtocolDatabase,
   SnapshotManager,
   KeyExchangeSession,
+  resolveSecretvmDomain,
 } from '@idiostasis/core';
 import type { DbSnapshot, ProtocolConfig, WrappedKey } from '@idiostasis/core';
 import { ERC8004Client } from '@idiostasis/erc8004-client';
@@ -128,22 +129,21 @@ export async function startGuardian(): Promise<void> {
 
   console.log(`[guardian] ready, teeInstanceId=${teeInstanceId}, waiting for primary admission`);
 
-  // Initiate admission to primary agent
-  const agentDomain = process.env.AGENT_DOMAIN ?? '';
-  const agentUrl = process.env.AGENT_URL ?? '';
+  // Resolve guardian's own domain for attestation
+  const ownDomain = await resolveSecretvmDomain();
+  console.log(`[guardian] own domain: ${ownDomain}`);
 
-  // AGENT_URL takes precedence (e.g. http://67.43.239.18:3001)
-  // AGENT_DOMAIN falls back to http://{domain}:3001
-  const agentBaseUrl = agentUrl ||
-    (agentDomain ? `http://${agentDomain}:3001` : '');
+  // Initiate admission to primary agent
+  const agentUrl = process.env.AGENT_URL ?? '';
+  const agentBaseUrl = agentUrl; // AGENT_URL is the IP-based URL
 
   if (agentBaseUrl) {
     // Start admission in background — do not block server startup
-    initiateAdmission(agentBaseUrl, teeInstanceId, port, config)
+    initiateAdmission(agentBaseUrl, teeInstanceId, ownDomain, port, config)
       .catch(err => console.error('[guardian] admission initiation failed:', err));
   } else {
     console.warn(
-      '[guardian] AGENT_DOMAIN or AGENT_URL not set — ' +
+      '[guardian] AGENT_URL not set — ' +
       'admission must be triggered manually',
     );
   }
@@ -152,6 +152,7 @@ export async function startGuardian(): Promise<void> {
 async function initiateAdmission(
   agentBaseUrl: string,
   teeInstanceId: string,
+  ownDomain: string,
   port: number,
   config: ProtocolConfig,
 ): Promise<void> {
@@ -170,9 +171,9 @@ async function initiateAdmission(
 
   const body = JSON.stringify({
     role: 'guardian',
-    networkAddress: `${process.env.SECRETVM_DOMAIN ?? teeInstanceId}:${port}`,
+    networkAddress: `${ownDomain}:${port}`,
     teeInstanceId,
-    domain: process.env.SECRETVM_DOMAIN ?? '',
+    domain: ownDomain,
     nonce,
     timestamp,
     rtmr3: selfRtmr3,
