@@ -153,8 +153,11 @@ async function resolveAgentUrl(discovery: Erc8004Discovery | null): Promise<stri
     try {
       const discovered = await discovery.discoverPrimary();
       if (discovered) {
-        console.log(`[guardian] discovered agent via ERC-8004: ${discovered}`);
-        return discovered;
+        // discovered is the discovery service endpoint (e.g. https://host/discover)
+        // Extract the base URL (origin) for use as agentBaseUrl
+        const baseUrl = new URL(discovered).origin;
+        console.log(`[guardian] discovered agent via ERC-8004: ${baseUrl}`);
+        return baseUrl;
       }
       console.warn('[guardian] ERC-8004 discovery returned null — falling back to AGENT_URL');
     } catch (err) {
