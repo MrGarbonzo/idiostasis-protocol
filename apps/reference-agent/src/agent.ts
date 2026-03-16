@@ -103,7 +103,7 @@ export class MoltbookAgent {
         if (process.env.DEV_MODE === 'true') return 'dev-measurement';
         try {
           const provider = new SecretLabsAttestationProvider(this.config.pccsEndpoints);
-          const quote = await provider.fetchQuote(this.domain);
+          const quote = await provider.fetchQuote('localhost');
           const result = await provider.verifyQuote(quote);
           console.log(`[agent] self-attested RTMR3: ${result.rtmr3.slice(0, 16)}...`);
           return result.rtmr3;
@@ -172,33 +172,41 @@ export class MoltbookAgent {
 
     const storedTokenId = this.db.getConfig('erc8004_token_id');
     if (!storedTokenId && this.evmWallet && baseRpcUrl) {
-      try {
-        const domain = this.domain;
-        const result = await this.erc8004Client.register({
-          name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
-          description: 'Idiostasis Protocol reference agent',
-          services: [
-            {
-              name: 'teequote',
-              endpoint: `https://${domain}:29343/cpu.html`,
-            },
-            {
-              name: 'workload',
-              endpoint: `https://${domain}/workload`,
-            },
-            {
-              name: 'discovery',
-              endpoint: `https://${domain}/discover`,
-            },
-          ],
-          image: process.env.AGENT_IMAGE_URL,
-          wallet: this.evmWallet,
-        });
-        this.erc8004TokenId = result.tokenId;
-        this.db.setConfig('erc8004_token_id', String(result.tokenId));
-        console.log(`[agent] ERC-8004 registered. Token ID: ${result.tokenId}`);
-      } catch (err) {
-        console.warn(`[agent] ERC-8004 registration failed (non-fatal): ${err}`);
+      if (this.domain === 'localhost') {
+        console.warn(
+          '[agent] ERC-8004 registration skipped — ' +
+          'SECRETVM_DOMAIN not set, domain unknown. ' +
+          'Set SECRETVM_DOMAIN and restart to register.',
+        );
+      } else {
+        try {
+          const domain = this.domain;
+          const result = await this.erc8004Client.register({
+            name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
+            description: 'Idiostasis Protocol reference agent',
+            services: [
+              {
+                name: 'teequote',
+                endpoint: `https://${domain}:29343/cpu.html`,
+              },
+              {
+                name: 'workload',
+                endpoint: `https://${domain}/workload`,
+              },
+              {
+                name: 'discovery',
+                endpoint: `https://${domain}/discover`,
+              },
+            ],
+            image: process.env.AGENT_IMAGE_URL,
+            wallet: this.evmWallet,
+          });
+          this.erc8004TokenId = result.tokenId;
+          this.db.setConfig('erc8004_token_id', String(result.tokenId));
+          console.log(`[agent] ERC-8004 registered. Token ID: ${result.tokenId}`);
+        } catch (err) {
+          console.warn(`[agent] ERC-8004 registration failed (non-fatal): ${err}`);
+        }
       }
     } else if (storedTokenId) {
       this.erc8004TokenId = parseInt(storedTokenId, 10);
