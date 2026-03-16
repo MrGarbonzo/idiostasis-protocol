@@ -1,4 +1,4 @@
-import { createHash, createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createHash, createCipheriv, createDecipheriv, randomBytes, X509Certificate } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 
@@ -54,30 +54,33 @@ export async function resolveTeeInstanceId(): Promise<string> {
  * Resolve this VM's SecretVM domain at runtime.
  *
  * Priority:
- *   1. SECRETVM_DOMAIN env var (required on SecretVM — set in compose after deployment)
- *   2. /mnt/secure/self_report.txt — look for "domain:" or "vmDomain:" field
- *   3. Dev fallback: "localhost"
- *
- * Note: hostname-based detection was removed because SecretVM containers
- * always have hostname "secret-vm-tdx", not the domain prefix.
+ *   1. SECRETVM_DOMAIN env var (explicit override)
+ *   2. Parse CN from /mnt/secure/cert/secret_vm_cert.pem
+ *   3. /mnt/secure/self_report.txt — look for "domain:" or "vmDomain:" field
+ *   4. Dev fallback: "localhost"
  */
 export async function resolveSecretvmDomain(): Promise<string> {
-  // 1. Explicit env var — required on SecretVM
+  // 1. Explicit env var override
   const envDomain = process.env.SECRETVM_DOMAIN;
   if (envDomain) return envDomain;
 
-  // 2. Try self_report.txt for domain field
+  // 2. Parse CN from the VM's SSL certificate
+  try {
+    const cert = await readFile('/mnt/secure/cert/secret_vm_cert.pem');
+    const x509 = new X509Certificate(cert);
+    const cn = x509.subject.match(/CN=([^\n,]+)/)?.[1];
+    if (cn) return cn;
+  } catch { /* cert not available */ }
+
+  // 3. Try self_report.txt for domain field
   try {
     const report = await readFile('/mnt/secure/self_report.txt', 'utf-8');
     const match = report.match(/(?:vmDomain|domain):\s*([a-z0-9-]+\.vm\.scrtlabs\.com)/i);
     if (match?.[1]) return match[1];
   } catch { /* not available */ }
 
-  // 3. Dev fallback
-  console.warn(
-    '[tee] SECRETVM_DOMAIN not set and could not be resolved — ' +
-    'using localhost. Set SECRETVM_DOMAIN in compose file after deployment.',
-  );
+  // 4. Dev fallback
+  console.warn('[tee] could not resolve SecretVM domain — using localhost');
   return 'localhost';
 }
 
