@@ -234,9 +234,10 @@ export async function handleBackupConfirm(
   // Update ERC-8004 registry endpoint after succession
   if (deps.erc8004Client && deps.erc8004TokenId && deps.evmWallet) {
     try {
+      const port = process.env.PORT ?? '3001';
       const newEndpoint = deps.domain && deps.domain !== 'localhost'
-        ? `https://${deps.domain}/discover`
-        : `http://localhost:${process.env.PORT ?? '3001'}/discover`;
+        ? `http://${deps.domain}:${port}/discover`
+        : `http://localhost:${port}/discover`;
       await deps.erc8004Client.updateEndpoint(
         deps.erc8004TokenId, 'discovery', newEndpoint, deps.evmWallet,
       );

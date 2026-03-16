@@ -183,13 +183,14 @@ export class MoltbookAgent {
     const storedTokenId = this.db.getConfig('erc8004_token_id');
     if (!storedTokenId && this.evmWallet && baseRpcUrl && this.domain !== 'localhost') {
       try {
+        const port = process.env.PORT ?? '3001';
         const result = await this.erc8004Client.register({
           name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
           description: 'Idiostasis Protocol reference agent',
           services: [
             { name: 'teequote', endpoint: `https://${this.domain}:29343/cpu.html` },
-            { name: 'workload', endpoint: `https://${this.domain}/workload` },
-            { name: 'discovery', endpoint: `https://${this.domain}/discover` },
+            { name: 'workload', endpoint: `http://${this.domain}:${port}/workload` },
+            { name: 'discovery', endpoint: `http://${this.domain}:${port}/discover` },
           ],
           image: process.env.AGENT_IMAGE_URL,
           wallet: this.evmWallet,
