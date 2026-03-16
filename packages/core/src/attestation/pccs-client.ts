@@ -67,13 +67,12 @@ export async function verifyWithPccs(
     try {
       const data = await fetcher(endpoint, body);
 
-      // PCCS response: { "status": {...}, "quote": { "rtmr3": "..." } }
-      const quote = (data.quote ?? data) as Record<string, unknown>;
-      const rtmr3 = (quote.rtmr3 ?? quote.rtmr_3 ?? data.rtmr3 ?? data.rtmr_3) as string | undefined;
+      const quoteObj = (data.quote ?? data) as Record<string, unknown>;
+      const rtmr3 = (quoteObj.rtmr3 ?? quoteObj.rtmr_3 ?? data.rtmr3 ?? data.rtmr_3) as string | undefined;
       if (!rtmr3) throw new Error('PCCS response missing rtmr3/rtmr_3 field');
 
-      const status = (data.status ?? data) as Record<string, unknown>;
-      const tcbStatus = (status.result ?? status.tcb_status ?? status.tcbStatus ?? 'unknown') as string;
+      const statusObj = (data.status ?? data) as Record<string, unknown>;
+      const tcbStatus = (statusObj.result ?? statusObj.tcb_status ?? statusObj.tcbStatus ?? 'unknown') as string;
       return { rtmr3, valid: true, tcbStatus };
     } catch (err) {
       console.warn(`PCCS endpoint ${endpoint} failed:`, err);
