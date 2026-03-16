@@ -105,7 +105,7 @@ export class MoltbookAgent {
       console.log(`[agent] RTMR3 locked: ${this.agentRtmr3}`);
     }
 
-    const guardianRtmr3 = (process.env.GUARDIAN_APPROVED_RTMR3 ?? 'dev-measurement')
+    const guardianRtmr3 = (process.env.GUARDIAN_APPROVED_RTMR3 ?? '')
       .split(',').map(s => s.trim()).filter(Boolean);
 
     // 8. Initialize SnapshotManager
