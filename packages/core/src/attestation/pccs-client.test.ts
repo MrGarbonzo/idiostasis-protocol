@@ -63,6 +63,17 @@ describe('verifyWithPccs', () => {
     assert.equal(result.rtmr3, 'value-from-rtmr-underscore-3');
   });
 
+  it('extracts rtmr3 from nested quote object', async () => {
+    const fetcher: PccsFetcher = async () => ({
+      status: { result: '0' },
+      quote: { rtmr3: 'nested-rtmr3-value', mr_td: 'abcd' },
+    });
+
+    const result = await verifyWithPccs('q', ['https://ep.test'], fetcher);
+    assert.equal(result.rtmr3, 'nested-rtmr3-value');
+    assert.equal(result.tcbStatus, '0');
+  });
+
   it('rejects response missing both field names', async () => {
     const fetcher: PccsFetcher = async () => ({
       some_other_field: 'no rtmr here',
