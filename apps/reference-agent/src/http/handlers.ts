@@ -244,6 +244,7 @@ export async function handleBackupConfirm(
 function deserializeKey(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (Buffer.isBuffer(value)) return new Uint8Array(value);
+  if (Array.isArray(value)) return new Uint8Array(value);
   if (typeof value === 'string') return new Uint8Array(Buffer.from(value, 'base64'));
-  return new Uint8Array(32);
+  return new Uint8Array(0);
 }

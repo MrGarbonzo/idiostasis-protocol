@@ -20,17 +20,11 @@ function asyncWrap(fn: AsyncHandler) {
   };
 }
 
-export interface HttpServerOptions {
-  x402Middleware?: (req: Request, res: Response, next: NextFunction) => void;
-}
-
 export class HttpServer {
   private readonly app: ReturnType<typeof express>;
   private server: ReturnType<ReturnType<typeof express>['listen']> | null = null;
-  private readonly options: HttpServerOptions;
 
-  constructor(private readonly deps: HandlerDeps, options?: HttpServerOptions) {
-    this.options = options ?? {};
+  constructor(private readonly deps: HandlerDeps) {
     this.app = express();
     this.app.use(express.json());
     this.app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -61,15 +55,9 @@ export class HttpServer {
       res.json(await handleWorkload(this.deps));
     }));
 
-    const discoverHandler = asyncWrap(async (_req: Request, res: Response) => {
+    this.app.get('/discover', asyncWrap(async (_req, res) => {
       res.json(await handleDiscover(this.deps));
-    });
-
-    if (this.options.x402Middleware) {
-      this.app.get('/discover', this.options.x402Middleware, discoverHandler);
-    } else {
-      this.app.get('/discover', discoverHandler);
-    }
+    }));
 
     this.app.post('/api/backup/ready', asyncWrap(async (req, res) => {
       res.json(await handleBackupReady(this.deps, req.body));

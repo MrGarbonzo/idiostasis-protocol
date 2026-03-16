@@ -232,29 +232,7 @@ export class MoltbookAgent {
       config: this.config,
       signer,
     };
-    // x402 middleware for /discover (when EVM wallet is available)
-    const httpOptions: import('./http/server.js').HttpServerOptions = {};
-    if (this.evmWallet) {
-      const payTo = this.evmWallet.address;
-      const priceUsdc = this.config.discoveryPriceUsdc;
-      const chain = process.env.BASE_NETWORK ?? 'base-sepolia';
-      httpOptions.x402Middleware = (req, res, next) => {
-        const payment = req.headers['x-payment'];
-        if (payment) {
-          // TODO: Phase 11+ — verify payment via facilitator
-          next();
-        } else {
-          res.status(402).json({
-            amount: priceUsdc * 1_000_000, // USDC 6 decimals
-            currency: 'USDC',
-            chain,
-            payTo,
-            memo: 'idiostasis agent discovery',
-          });
-        }
-      };
-    }
-    this.httpServer = new HttpServer(deps, httpOptions);
+    this.httpServer = new HttpServer(deps);
 
     // 16. Seal vault key
     await this.vaultKeyManager.seal();
@@ -280,7 +258,8 @@ export class MoltbookAgent {
     console.log('[agent] Heartbeat manager started');
 
     // Start autonomous guardian manager (primary only)
-    if (this.role === 'primary' && this.secretvmClient && this.db) {
+    const secretvmApiKey = process.env.SECRETVM_API_KEY;
+    if (this.role === 'primary' && this.secretvmClient && this.db && secretvmApiKey) {
       const guardianVmClient = {
         createVm: async (params: { name: string; dockerCompose: Uint8Array }) => {
           const result = await this.secretvmClient!.createVm({
@@ -315,7 +294,10 @@ export class MoltbookAgent {
       );
       console.log('[agent] Autonomous guardian manager started');
     } else if (this.role === 'primary') {
-      console.warn('[agent] Guardian manager disabled — no SecretVM client');
+      console.warn(
+        '[agent] Autonomous guardian manager disabled — ' +
+        'SECRETVM_API_KEY not set',
+      );
     }
 
     console.log(`[agent] started as ${this.role}`);

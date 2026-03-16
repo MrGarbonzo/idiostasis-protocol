@@ -161,13 +161,6 @@ export interface ProtocolConfig {
   backupJitterMaxMs: number;
 
   /**
-   * Price in USDC charged for x402-gated discovery endpoint.
-   * @default 0.001
-   * @env X402_DISCOVERY_PRICE_USDC
-   */
-  discoveryPriceUsdc: number;
-
-  /**
    * Consecutive re-attestation failures before removing a peer
    * from trusted set and requiring full re-admission (Decision 5).
    * @default 2

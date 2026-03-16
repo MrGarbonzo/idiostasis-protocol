@@ -60,12 +60,6 @@ export const MIN_GUARDIAN_COUNT = 3;
 export const BACKUP_JITTER_MAX_MS = 30_000;
 
 /**
- * Price in USDC for x402-gated discovery endpoint access.
- * @env X402_DISCOVERY_PRICE_USDC
- */
-export const X402_DISCOVERY_PRICE_USDC = 0.001;
-
-/**
  * Consecutive re-attestation failures before removing a peer.
  * After this many failures, peer is removed from trusted set and
  * must complete full re-admission (Decision 5).
@@ -98,7 +92,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     peerStalenessThresholdMs: parseIntEnv(env.PEER_STALENESS_MS, PEER_STALENESS_MS),
     minGuardianCount: parseIntEnv(env.MIN_GUARDIAN_COUNT, MIN_GUARDIAN_COUNT),
     backupJitterMaxMs: parseIntEnv(env.BACKUP_JITTER_MAX_MS, BACKUP_JITTER_MAX_MS),
-    discoveryPriceUsdc: parseFloatEnv(env.X402_DISCOVERY_PRICE_USDC, X402_DISCOVERY_PRICE_USDC),
     reAttestFailureLimit: parseIntEnv(env.RE_ATTEST_FAILURE_LIMIT, RE_ATTEST_FAILURE_LIMIT),
     agentApprovedRtmr3: parseCommaSeparated(env.AGENT_APPROVED_RTMR3),
     guardianApprovedRtmr3: parseCommaSeparated(env.GUARDIAN_APPROVED_RTMR3),
@@ -109,12 +102,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
 function parseIntEnv(value: string | undefined, fallback: number): number {
   if (value === undefined || value === '') return fallback;
   const parsed = parseInt(value, 10);
-  return Number.isNaN(parsed) ? fallback : parsed;
-}
-
-function parseFloatEnv(value: string | undefined, fallback: number): number {
-  if (value === undefined || value === '') return fallback;
-  const parsed = parseFloat(value);
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
