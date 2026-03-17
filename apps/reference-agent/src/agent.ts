@@ -280,6 +280,12 @@ export class MoltbookAgent {
     });
     console.log('[agent] Heartbeat manager started');
 
+    // Periodic DB snapshot push to guardians (every 5 minutes)
+    setInterval(() => {
+      void this.pushSnapshotToGuardians();
+    }, 5 * 60 * 1000);
+    console.log('[agent] periodic snapshot push started (5min interval)');
+
     // Backup agent: initiate admission to primary, skip guardian manager / ERC-8004
     if (this.role === 'backup') {
       this.initiateBackupAdmission().catch(err =>
