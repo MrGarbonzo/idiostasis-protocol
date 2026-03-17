@@ -71,24 +71,27 @@ export class VaultKeyManager {
     this.key = newKey;
   }
 
-  /** Seal vault key to the first writable path. */
+  /** Seal vault key to all available paths (not just first). */
   async seal(): Promise<void> {
     const sealingKey = await deriveSealingKey();
     const sealed = sealData(this.key, sealingKey);
     const json = JSON.stringify(sealed);
 
+    let sealedCount = 0;
     for (const path of [TEE_SEALED_PATH, FILE_SEALED_PATH]) {
       try {
         await mkdir(dirname(path), { recursive: true });
         await writeFile(path, json, 'utf-8');
         console.log(`[vault] sealed vault key to ${path}`);
-        return;
+        sealedCount++;
       } catch {
-        continue;
+        // Path not writable — try next
       }
     }
 
-    throw new Error('vault: failed to seal key — no writable path available');
+    if (sealedCount === 0) {
+      throw new Error('vault: failed to seal key — no writable path available');
+    }
   }
 }
 
