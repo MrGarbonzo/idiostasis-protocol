@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
+import { randomUUID, generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import {
   loadConfig,
   VaultKeyManager,
@@ -7,6 +7,7 @@ import {
   SnapshotManager,
   AdmissionService,
   HeartbeatManager,
+  KeyExchangeSession,
   resolveTeeInstanceId,
   resolveSecretvmDomain,
   resolveSecretvmDomainFromTls,
@@ -54,6 +55,7 @@ export class MoltbookAgent {
   private x402Client: X402Client | null = null;
   private secretvmClient: SecretVmClient | null = null;
   private guardianManager: AutonomousGuardianManager | null = null;
+  private primaryBaseUrl: string = '';
 
   constructor() {
     this.config = loadConfig();
@@ -69,9 +71,8 @@ export class MoltbookAgent {
     this.domain = await resolveSecretvmDomain();
     console.log(`[agent] domain: ${this.domain}`);
 
-    // 3. Determine role
-    this.role = this.vaultKeyManager.isFirstBoot() ? 'primary' : 'primary';
-    // TODO: Phase 10 — role resolution from DB state (primary vs backup)
+    // 3. Determine role via ERC-8004 registry check
+    this.role = await this.resolveRole();
 
     // 4. Initialize DB
     const dbPath = process.env.DB_PATH ?? join('/data', 'agent.db');
@@ -119,8 +120,8 @@ export class MoltbookAgent {
       console.log(`[agent] RTMR3 locked: ${this.agentRtmr3}`);
     }
 
-    // 7b. Resolve domain for ERC-8004 — try TLS cert on port 29343
-    if (this.domain === 'localhost') {
+    // 7b. Resolve domain for ERC-8004 — try TLS cert on port 29343 (primary only)
+    if (this.role === 'primary' && this.domain === 'localhost') {
       const tlsDomain = await resolveSecretvmDomainFromTls();
       if (tlsDomain) {
         this.domain = tlsDomain;
@@ -168,44 +169,46 @@ export class MoltbookAgent {
       (process.env.BASE_NETWORK ?? 'base-sepolia') as 'base-sepolia' | 'base',
     );
 
-    // 13. ERC-8004 registration on first boot
+    // 13. ERC-8004 registration on first boot (primary only)
     let evmMnemonic: string | null = null;
-    try {
-      const resolved = await resolveEvmWallet(this.db);
-      if (resolved) {
-        this.evmWallet = resolved.wallet;
-        evmMnemonic = resolved.mnemonic;
-      }
-    } catch (err) {
-      console.warn(`[agent] EVM wallet setup failed (non-fatal): ${err}`);
-    }
-
-    const storedTokenId = this.db.getConfig('erc8004_token_id');
-    if (!storedTokenId && this.evmWallet && baseRpcUrl && this.domain !== 'localhost') {
+    if (this.role === 'primary') {
       try {
-        const port = process.env.PORT ?? '3001';
-        const result = await this.erc8004Client.register({
-          name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
-          description: 'Idiostasis Protocol reference agent',
-          services: [
-            { name: 'teequote', endpoint: `https://${this.domain}:29343/cpu.html` },
-            { name: 'workload', endpoint: `http://${this.domain}:${port}/workload` },
-            { name: 'discovery', endpoint: `http://${this.domain}:${port}/discover` },
-          ],
-          image: process.env.AGENT_IMAGE_URL,
-          wallet: this.evmWallet,
-        });
-        this.erc8004TokenId = result.tokenId;
-        this.db.setConfig('erc8004_token_id', String(result.tokenId));
-        this.db.setConfig('erc8004_domain', this.domain);
-        console.log(`[agent] ERC-8004 registered. Token ID: ${result.tokenId}`);
+        const resolved = await resolveEvmWallet(this.db);
+        if (resolved) {
+          this.evmWallet = resolved.wallet;
+          evmMnemonic = resolved.mnemonic;
+        }
       } catch (err) {
-        console.warn(`[agent] ERC-8004 registration failed (non-fatal): ${err}`);
+        console.warn(`[agent] EVM wallet setup failed (non-fatal): ${err}`);
       }
-    } else if (storedTokenId) {
-      this.erc8004TokenId = parseInt(storedTokenId, 10);
-      const storedDomain = this.db.getConfig('erc8004_domain');
-      console.log(`[agent] ERC-8004 token ID: ${storedTokenId}, domain: ${storedDomain}`);
+
+      const storedTokenId = this.db.getConfig('erc8004_token_id');
+      if (!storedTokenId && this.evmWallet && baseRpcUrl && this.domain !== 'localhost') {
+        try {
+          const port = process.env.PORT ?? '3001';
+          const result = await this.erc8004Client.register({
+            name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
+            description: 'Idiostasis Protocol reference agent',
+            services: [
+              { name: 'teequote', endpoint: `https://${this.domain}:29343/cpu.html` },
+              { name: 'workload', endpoint: `http://${this.domain}:${port}/workload` },
+              { name: 'discovery', endpoint: `http://${this.domain}:${port}/discover` },
+            ],
+            image: process.env.AGENT_IMAGE_URL,
+            wallet: this.evmWallet,
+          });
+          this.erc8004TokenId = result.tokenId;
+          this.db.setConfig('erc8004_token_id', String(result.tokenId));
+          this.db.setConfig('erc8004_domain', this.domain);
+          console.log(`[agent] ERC-8004 registered. Token ID: ${result.tokenId}`);
+        } catch (err) {
+          console.warn(`[agent] ERC-8004 registration failed (non-fatal): ${err}`);
+        }
+      } else if (storedTokenId) {
+        this.erc8004TokenId = parseInt(storedTokenId, 10);
+        const storedDomain = this.db.getConfig('erc8004_domain');
+        console.log(`[agent] ERC-8004 token ID: ${storedTokenId}, domain: ${storedDomain}`);
+      }
     }
 
     // 14. Initialize x402 and SecretVM clients
@@ -278,6 +281,14 @@ export class MoltbookAgent {
     });
     console.log('[agent] Heartbeat manager started');
 
+    // Backup agent: initiate admission to primary, skip guardian manager / ERC-8004
+    if (this.role === 'backup') {
+      this.initiateBackupAdmission().catch(err =>
+        console.error('[agent] backup admission error:', err)
+      );
+      return;
+    }
+
     // Start autonomous guardian manager (primary only)
     const secretvmApiKey = process.env.SECRETVM_API_KEY;
     if (this.role === 'primary' && this.secretvmClient && this.db && secretvmApiKey) {
@@ -339,6 +350,127 @@ export class MoltbookAgent {
     await this.httpServer?.stop();
     this.db?.close();
     console.log('[agent] shutdown complete');
+  }
+
+  private async resolveRole(): Promise<string> {
+    const tokenId = parseInt(process.env.ERC8004_TOKEN_ID ?? '0', 10);
+    const baseRpcUrl = process.env.BASE_RPC_URL ?? '';
+
+    if (!tokenId || !baseRpcUrl) {
+      console.log('[agent] no ERC8004_TOKEN_ID — booting as primary');
+      return 'primary';
+    }
+
+    const registryAddress = process.env.ERC8004_REGISTRY_ADDRESS
+      ?? ERC8004_REGISTRY_ADDRESS_BASE_SEPOLIA;
+    const client = new ERC8004Client(
+      baseRpcUrl,
+      registryAddress,
+      (process.env.BASE_NETWORK ?? 'base-sepolia') as 'base-sepolia' | 'base',
+    );
+
+    try {
+      const discovered = await client.getLivePrimaryAddress(tokenId);
+      if (!discovered) {
+        console.log('[agent] no live primary in registry — booting as primary');
+        return 'primary';
+      }
+
+      // Extract base URL from discovery endpoint
+      const url = new URL(discovered);
+      const primaryBaseUrl = `${url.protocol}//${url.host}`;
+
+      // Check if the live primary is reachable and not this instance
+      try {
+        const res = await fetch(`${primaryBaseUrl}/status`, {
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (res.ok) {
+          const status = await res.json() as { teeInstanceId?: string };
+          if (status.teeInstanceId === this.teeInstanceId) {
+            console.log('[agent] registry points to this instance — booting as primary');
+            return 'primary';
+          }
+          console.log(`[agent] live primary found at ${primaryBaseUrl} — booting as backup`);
+          this.primaryBaseUrl = primaryBaseUrl;
+          return 'backup';
+        }
+      } catch {
+        console.log('[agent] registry primary unreachable — booting as primary');
+        return 'primary';
+      }
+    } catch (err) {
+      console.warn(`[agent] registry check failed: ${err} — booting as primary`);
+    }
+
+    return 'primary';
+  }
+
+  private async initiateBackupAdmission(): Promise<void> {
+    console.log(`[agent] initiating backup admission to ${this.primaryBaseUrl}`);
+
+    let attempts = 0;
+    const maxAttempts = 10;
+    const retryDelayMs = 15_000;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+
+      const session = await KeyExchangeSession.generate();
+      const { x25519, ed25519, signature } = session.getPublicKeys();
+      const nonce = randomUUID();
+      const timestamp = Date.now();
+      const port = process.env.PORT ?? '3001';
+
+      const body = JSON.stringify({
+        role: 'backup_agent',
+        networkAddress: `http://${this.domain}:${port}`,
+        teeInstanceId: this.teeInstanceId,
+        nonce,
+        timestamp,
+        x25519PublicKey: Array.from(x25519),
+        ed25519PublicKey: Array.from(ed25519),
+        ed25519Signature: Array.from(signature),
+      });
+
+      try {
+        const res = await fetch(`${this.primaryBaseUrl}/api/admission`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          signal: AbortSignal.timeout(10_000),
+        });
+
+        const result = await res.json() as {
+          accepted: boolean;
+          reason?: string;
+        };
+
+        if (result.accepted) {
+          console.log('[agent] backup admission accepted — standing by for succession');
+          return;
+        }
+
+        console.warn(
+          `[agent] backup admission rejected: ${result.reason} ` +
+          `(attempt ${attempts}/${maxAttempts})`
+        );
+
+        if (result.reason === 'rtmr3_mismatch' ||
+            result.reason === 'invalid_signature') {
+          console.error('[agent] backup admission hard-rejected — fix configuration');
+          return;
+        }
+      } catch (err) {
+        console.warn(`[agent] backup admission attempt ${attempts}/${maxAttempts} failed: ${err}`);
+      }
+
+      if (attempts < maxAttempts) {
+        await new Promise(r => setTimeout(r, retryDelayMs));
+      }
+    }
+
+    console.error('[agent] backup admission failed after all attempts');
   }
 }
 
