@@ -21,9 +21,13 @@ const wallet = {
 
 const client = new ERC8004Client(rpcUrl, '0x8004A818BFB912233c491871b3d84c89A494BD9e');
 
-await client.updateEndpoint(tokenId, 'discovery',
-  `http://${domain}:${port}/discover`, wallet);
-await client.updateEndpoint(tokenId, 'workload',
-  `http://${domain}:${port}/workload`, wallet);
+async function main() {
+  await client.updateEndpoint(tokenId, 'discovery',
+    `http://${domain}:${port}/discover`, wallet);
+  await client.updateEndpoint(tokenId, 'workload',
+    `http://${domain}:${port}/workload`, wallet);
 
-console.log('Updated endpoints for token', tokenId);
+  console.log('Updated endpoints for token', tokenId);
+}
+
+main().catch(err => { console.error(err); process.exit(1); });
