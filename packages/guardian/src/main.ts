@@ -138,7 +138,7 @@ export async function startGuardian(): Promise<void> {
 
   if (agentBaseUrl) {
     // Start admission in background — do not block server startup
-    initiateAdmission(agentBaseUrl, teeInstanceId, port, config, discovery)
+    initiateAdmission(agentBaseUrl, teeInstanceId, port, config)
       .catch(err => console.error('[guardian] admission initiation failed:', err));
   } else {
     console.warn(
@@ -158,7 +158,8 @@ async function resolveAgentUrl(discovery: Erc8004Discovery | null): Promise<stri
     if (discovered) {
       const url = new URL(discovered);
       const baseUrl = `${url.protocol}//${url.host}`;
-      console.log(`[guardian] discovered agent via ERC-8004: ${baseUrl}`);
+      console.log(`[guardian] discovered agent via ERC-8004: ${discovered}`);
+      console.log(`[guardian] agent base URL: ${baseUrl}`);
       return baseUrl;
     }
     console.error('[guardian] ERC-8004 discovery returned null — agent not registered or token ID wrong');
@@ -170,13 +171,11 @@ async function resolveAgentUrl(discovery: Erc8004Discovery | null): Promise<stri
 }
 
 async function initiateAdmission(
-  initialAgentBaseUrl: string,
+  agentBaseUrl: string,
   teeInstanceId: string,
   port: number,
   config: ProtocolConfig,
-  discovery: Erc8004Discovery | null,
 ): Promise<void> {
-  let agentBaseUrl = initialAgentBaseUrl;
   console.log(`[guardian] initiating admission to ${agentBaseUrl}`);
 
   // Self-reported RTMR3 — read from TEE path or env var
@@ -236,20 +235,10 @@ async function initiateAdmission(
         `(attempt ${attempts}/${maxAttempts})`,
       );
 
-      // Don't retry on hard rejections
+      // Hard rejections — configuration problem on this guardian, stop immediately
       if (result.reason === 'rtmr3_mismatch' ||
           result.reason === 'invalid_signature' ||
           result.reason === 'missing_domain') {
-        // Try re-discovering via ERC-8004 in case the primary changed
-        if (result.reason === 'rtmr3_mismatch' && discovery) {
-          console.log('[guardian] hard-rejected — attempting ERC-8004 rediscovery');
-          const rediscovered = await discovery.discoverPrimary().catch(() => null);
-          if (rediscovered && rediscovered !== agentBaseUrl) {
-            console.log(`[guardian] found new primary at ${rediscovered} — restarting admission`);
-            agentBaseUrl = rediscovered;
-            continue;
-          }
-        }
         console.error(
           '[guardian] admission hard-rejected — ' +
           'fix configuration and redeploy',
