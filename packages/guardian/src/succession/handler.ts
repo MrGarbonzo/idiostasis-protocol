@@ -54,6 +54,7 @@ export class SuccessionHandler {
   }
 
   async initiate(): Promise<void> {
+    console.warn('[succession] initiate() called — starting succession protocol');
     if (this.inProgress) return;
     this.inProgress = true;
 
@@ -66,6 +67,7 @@ export class SuccessionHandler {
     }
 
     try {
+      console.warn('[succession] calling successionManager.initiateSuccession()');
       await this.successionManager.initiateSuccession(transport, signer);
     } catch (err) {
       if (err instanceof SuccessionExhaustedError) {

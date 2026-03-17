@@ -192,6 +192,7 @@ function createSuccessionTransport(guardianTeeInstanceId: string): SuccessionTra
         ? `${networkAddress}/api/backup/ready`
         : `http://${networkAddress}/api/backup/ready`;
 
+      console.log(`[succession] contacting backup candidate at ${url}`);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -221,6 +222,7 @@ function createSuccessionTransport(guardianTeeInstanceId: string): SuccessionTra
         ? `${networkAddress}/api/backup/confirm`
         : `http://${networkAddress}/api/backup/confirm`;
 
+      console.log(`[succession] sending vault key + snapshot to ${url}`);
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

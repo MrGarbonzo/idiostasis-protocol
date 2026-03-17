@@ -54,7 +54,13 @@ export class LivenessMonitor {
   start(): void {
     this.heartbeatManager.start();
     this.pollingId = setInterval(() => {
+      const msSince = this.heartbeatManager.getMsSinceLastPing();
+      const threshold = this.config.livenessFailureThreshold * this.config.heartbeatIntervalMs;
+      if (msSince !== null) {
+        console.log(`[liveness] ms since last ping: ${msSince}, threshold: ${threshold}`);
+      }
       if (this.heartbeatManager.isLivenessFailure()) {
+        console.warn('[liveness] LIVENESS FAILURE DETECTED — initiating succession');
         if (!this.successionHandler.isInProgress()) {
           void this.successionHandler.initiate();
         }
