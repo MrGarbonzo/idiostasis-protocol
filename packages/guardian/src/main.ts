@@ -142,29 +142,31 @@ export async function startGuardian(): Promise<void> {
       .catch(err => console.error('[guardian] admission initiation failed:', err));
   } else {
     console.warn(
-      '[guardian] AGENT_URL not set and ERC-8004 discovery failed — ' +
+      '[guardian] ERC-8004 discovery failed — ' +
       'admission must be triggered manually',
     );
   }
 }
 
 async function resolveAgentUrl(discovery: Erc8004Discovery | null): Promise<string> {
-  if (discovery) {
-    try {
-      const discovered = await discovery.discoverPrimary();
-      if (discovered) {
-        // Strip path — we need the base URL not the discovery endpoint
-        const url = new URL(discovered);
-        const baseUrl = `${url.protocol}//${url.host}`;
-        console.log(`[guardian] discovered agent via ERC-8004: ${baseUrl}`);
-        return baseUrl;
-      }
-      console.warn('[guardian] ERC-8004 discovery returned null — falling back to AGENT_URL');
-    } catch (err) {
-      console.warn(`[guardian] ERC-8004 discovery failed: ${err} — falling back to AGENT_URL`);
-    }
+  if (!discovery) {
+    console.error('[guardian] ERC-8004 discovery not configured — ERC8004_TOKEN_ID and BASE_RPC_URL are required');
+    return '';
   }
-  return process.env.AGENT_URL ?? '';
+  try {
+    const discovered = await discovery.discoverPrimary();
+    if (discovered) {
+      const url = new URL(discovered);
+      const baseUrl = `${url.protocol}//${url.host}`;
+      console.log(`[guardian] discovered agent via ERC-8004: ${baseUrl}`);
+      return baseUrl;
+    }
+    console.error('[guardian] ERC-8004 discovery returned null — agent not registered or token ID wrong');
+    return '';
+  } catch (err) {
+    console.error(`[guardian] ERC-8004 discovery failed: ${err}`);
+    return '';
+  }
 }
 
 async function initiateAdmission(
