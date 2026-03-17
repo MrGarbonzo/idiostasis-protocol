@@ -17,37 +17,62 @@ export interface SealedData {
  *   3. /sys/kernel/config/tsm/report/outblob — SHA256 of content
  *   4. DEV_MODE fallback: hostname + persistent seed at /tmp/.idiostasis-dev-seed
  */
+const TEE_INSTANCE_ID_PATH = '/data/tee-instance-id';
+
 export async function resolveTeeInstanceId(): Promise<string> {
+  // 0. Check persistent storage first — stable across restarts
+  try {
+    const stored = await readFile(TEE_INSTANCE_ID_PATH, 'utf-8');
+    const id = stored.trim();
+    if (id && id.length === 32) return id;
+  } catch { /* not stored yet */ }
+
+  // 1-3. Derive from TEE sources
   const teePaths = [
     '/mnt/secure/self_report.txt',
     '/mnt/secure/tdx_attestation.txt',
     '/sys/kernel/config/tsm/report/outblob',
   ];
 
+  let id: string | null = null;
+
   for (const path of teePaths) {
     try {
       const content = await readFile(path);
-      return createHash('sha256').update(content).digest('hex').slice(0, 32);
+      id = createHash('sha256').update(content).digest('hex').slice(0, 32);
+      break;
     } catch {
       continue;
     }
   }
 
-  // Dev mode fallback — hostname + persistent random seed
-  console.warn('[vault] no TEE identity source found — using dev fallback');
-  const seedPath = '/tmp/.idiostasis-dev-seed';
-  let seed: string;
-  try {
-    seed = (await readFile(seedPath, 'utf-8')).trim();
-  } catch {
-    seed = randomBytes(32).toString('hex');
+  if (!id) {
+    // Dev fallback — hostname + persistent seed
+    console.warn('[vault] no TEE identity source found — using dev fallback');
+    const seedPath = '/tmp/.idiostasis-dev-seed';
+    let seed: string;
     try {
-      await writeFile(seedPath, seed, 'utf-8');
+      seed = (await readFile(seedPath, 'utf-8')).trim();
     } catch {
-      // Can't persist seed — ephemeral identity
+      seed = randomBytes(32).toString('hex');
+      try {
+        await writeFile(seedPath, seed, 'utf-8');
+      } catch { /* ephemeral */ }
     }
+    id = createHash('sha256')
+      .update(`${hostname()}|${seed}`)
+      .digest('hex')
+      .slice(0, 32);
   }
-  return createHash('sha256').update(`${hostname()}|${seed}`).digest('hex').slice(0, 32);
+
+  // Persist for future restarts
+  try {
+    const { mkdir } = await import('node:fs/promises');
+    await mkdir('/data', { recursive: true });
+    await writeFile(TEE_INSTANCE_ID_PATH, id, 'utf-8');
+  } catch { /* non-fatal */ }
+
+  return id;
 }
 
 /**
