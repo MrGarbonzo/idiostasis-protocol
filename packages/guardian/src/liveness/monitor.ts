@@ -17,7 +17,7 @@ export interface SuccessionInitiator {
 export class LivenessMonitor {
   private readonly config: ProtocolConfig;
   private readonly db: ProtocolDatabase;
-  private readonly successionHandler: SuccessionInitiator;
+  private successionHandler: SuccessionInitiator;
   private heartbeatManager: HeartbeatManager;
   private pollingId: ReturnType<typeof setInterval> | null = null;
   private primaryEd25519PublicKey: Uint8Array | null = null;
@@ -41,6 +41,14 @@ export class LivenessMonitor {
    */
   setPrimaryPublicKey(key: Uint8Array): void {
     this.primaryEd25519PublicKey = key;
+  }
+
+  /**
+   * Replace the succession handler after admission completes and
+   * real vault key is available (replaces the dummy handler).
+   */
+  setSuccessionHandler(handler: SuccessionInitiator): void {
+    this.successionHandler = handler;
   }
 
   start(): void {

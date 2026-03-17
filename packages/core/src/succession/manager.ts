@@ -25,7 +25,7 @@ export type SuccessionTransport = {
   /** Send vault key + snapshot to candidate, wait for confirmation. */
   sendSuccessionPayload(
     networkAddress: string,
-    payload: { encryptedVaultKey: WrappedKey; dbSnapshot: DbSnapshot },
+    payload: { encryptedVaultKey: WrappedKey; dbSnapshot: DbSnapshot; guardianX25519PublicKey: Uint8Array },
   ): Promise<boolean>;
 };
 
@@ -117,10 +117,10 @@ export class SuccessionManager {
         const snapshotMgr = new SnapshotManager(this.db, this.vaultKey, this.teeInstanceId);
         const dbSnapshot = await snapshotMgr.createSnapshot(signer);
 
-        // Send to candidate
+        // Send to candidate (include guardian's X25519 public key so backup can compute shared secret)
         const confirmed = await transport.sendSuccessionPayload(
           candidate.networkAddress,
-          { encryptedVaultKey, dbSnapshot },
+          { encryptedVaultKey, dbSnapshot, guardianX25519PublicKey: session.getPublicKeys().x25519 },
         );
 
         if (!confirmed) {

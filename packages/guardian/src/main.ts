@@ -1,12 +1,19 @@
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { writeFile, mkdir } from 'node:fs/promises';
 import {
   loadConfig,
   ProtocolDatabase,
   SnapshotManager,
   KeyExchangeSession,
 } from '@idiostasis/core';
-import type { DbSnapshot, ProtocolConfig, WrappedKey } from '@idiostasis/core';
+import type {
+  DbSnapshot,
+  ProtocolConfig,
+  WrappedKey,
+  SuccessionTransport,
+  CandidateReadyResponse,
+} from '@idiostasis/core';
 import { ERC8004Client } from '@idiostasis/erc8004-client';
 import { LivenessMonitor } from './liveness/monitor.js';
 import { SuccessionHandler } from './succession/handler.js';
@@ -14,6 +21,12 @@ import { PeerRegistry } from './peers/registry.js';
 import { Erc8004Discovery } from './discovery/erc8004.js';
 import { GuardianHttpServer } from './guardian-http-server.js';
 import type { AdmissionPayload } from './http-server.js';
+
+interface AdmissionResultData {
+  vaultKey: Uint8Array;
+  dbSnapshot: DbSnapshot;
+  primaryEd25519PublicKey: Uint8Array;
+}
 
 /**
  * Guardian entry point.
@@ -27,6 +40,7 @@ import type { AdmissionPayload } from './http-server.js';
  * 6. Initialize LivenessMonitor and SuccessionHandler
  * 7. Start Express HTTP server
  * 8. Log ready
+ * 9. Initiate admission — on success, initialize DB and wire real succession
  */
 export async function startGuardian(): Promise<void> {
   const config = loadConfig();
@@ -87,35 +101,24 @@ export async function startGuardian(): Promise<void> {
   // (guardian can receive pings before admission)
   const monitorDb = db ?? new ProtocolDatabase(join(dataDir, 'monitor.db'), new Uint8Array(32));
 
-  // Create succession handler (will only work once vault key is set)
-  const successionHandler = vaultKey && db
-    ? new SuccessionHandler(db, config, vaultKey, teeInstanceId, erc8004Checker)
-    : null;
-
+  // Start with dummy succession handler — replaced after admission
   const dummySuccession = {
     async initiate() {
-      if (successionHandler) await successionHandler.initiate();
-      else console.warn('[guardian] succession attempted before admission');
+      console.warn('[guardian] succession attempted before admission');
     },
     isInProgress() {
-      return successionHandler?.isInProgress() ?? false;
+      return false;
     },
   };
 
   const liveness = new LivenessMonitor(config, monitorDb, dummySuccession);
   liveness.start();
 
-  // Admission handler — receives vault key from primary
+  // Admission handler — receives vault key from primary (passive path via HTTP)
   const onAdmission = async (payload: AdmissionPayload) => {
-    if (!vaultKey) {
-      // TODO: Decrypt vault key from payload using key exchange
-      console.log('[guardian] received admission — vault key provisioned');
-
-      // Store primary's Ed25519 public key for ping signature verification
-      if (payload.primaryEd25519PublicKey) {
-        liveness.setPrimaryPublicKey(payload.primaryEd25519PublicKey);
-        console.log('[guardian] primary Ed25519 public key stored for ping verification');
-      }
+    if (payload.primaryEd25519PublicKey) {
+      liveness.setPrimaryPublicKey(payload.primaryEd25519PublicKey);
+      console.log('[guardian] primary Ed25519 public key stored for ping verification');
     }
   };
 
@@ -137,15 +140,114 @@ export async function startGuardian(): Promise<void> {
   const agentBaseUrl = await resolveAgentUrl(discovery);
 
   if (agentBaseUrl) {
-    // Start admission in background — do not block server startup
-    initiateAdmission(agentBaseUrl, teeInstanceId, port, config)
-      .catch(err => console.error('[guardian] admission initiation failed:', err));
+    const admissionResult = await initiateAdmission(agentBaseUrl, teeInstanceId, port, config);
+
+    if (admissionResult) {
+      // Store vault key
+      vaultKey = admissionResult.vaultKey;
+
+      // Initialize DB with vault key
+      db = new ProtocolDatabase(dbPath, vaultKey);
+      snapshotManager = new SnapshotManager(db, vaultKey, teeInstanceId);
+
+      // Apply snapshot to DB
+      await snapshotManager.applySnapshot(admissionResult.dbSnapshot);
+      console.log('[guardian] DB snapshot applied — fully initialized');
+
+      // Store primary public key for ping verification
+      liveness.setPrimaryPublicKey(admissionResult.primaryEd25519PublicKey);
+
+      // Wire real succession handler
+      const realSuccessionHandler = new SuccessionHandler(
+        db, config, vaultKey, teeInstanceId, erc8004Checker,
+      );
+      realSuccessionHandler.setTransport(createSuccessionTransport(teeInstanceId));
+      realSuccessionHandler.setSigner(dummySigner);
+
+      // Replace dummy succession with real one in liveness monitor
+      liveness.setSuccessionHandler(realSuccessionHandler);
+      console.log('[guardian] real succession handler wired');
+
+      // Save vault key to disk
+      await mkdir(dataDir, { recursive: true });
+      await writeFile(
+        join(dataDir, 'vault-key.json'),
+        JSON.stringify({ key: Buffer.from(vaultKey).toString('hex') }),
+        'utf-8',
+      );
+      console.log('[guardian] vault key stored to disk');
+    }
   } else {
     console.warn(
       '[guardian] ERC-8004 discovery failed — ' +
       'admission must be triggered manually',
     );
   }
+}
+
+function createSuccessionTransport(guardianTeeInstanceId: string): SuccessionTransport {
+  return {
+    async contactCandidate(networkAddress: string): Promise<CandidateReadyResponse> {
+      const url = networkAddress.startsWith('http')
+        ? `${networkAddress}/api/backup/ready`
+        : `http://${networkAddress}/api/backup/ready`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          guardianTeeInstanceId,
+          guardianRtmr3: await readRtmr3(),
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!res.ok) throw new Error(`backup/ready failed: ${res.status}`);
+      const data = await res.json() as Record<string, unknown>;
+
+      return {
+        rtmr3: data.rtmr3 as string,
+        x25519PublicKey: deserializeKey(data.x25519PublicKey),
+        ed25519PublicKey: deserializeKey(data.ed25519PublicKey),
+        ed25519Signature: deserializeKey(data.ed25519Signature),
+      };
+    },
+
+    async sendSuccessionPayload(
+      networkAddress: string,
+      payload: { encryptedVaultKey: WrappedKey; dbSnapshot: DbSnapshot; guardianX25519PublicKey: Uint8Array },
+    ): Promise<boolean> {
+      const url = networkAddress.startsWith('http')
+        ? `${networkAddress}/api/backup/confirm`
+        : `http://${networkAddress}/api/backup/confirm`;
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          encryptedVaultKey: payload.encryptedVaultKey,
+          dbSnapshot: payload.dbSnapshot,
+          guardianX25519PublicKey: Array.from(payload.guardianX25519PublicKey),
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      if (!res.ok) return false;
+      const data = await res.json() as { ok: boolean };
+      return data.ok === true;
+    },
+  };
+}
+
+function deserializeKey(value: unknown): Uint8Array {
+  if (Array.isArray(value)) return new Uint8Array(value);
+  if (typeof value === 'string') return new Uint8Array(Buffer.from(value, 'base64'));
+  if (typeof value === 'object' && value !== null) {
+    // JSON.stringify(Uint8Array) produces {"0":1,"1":2,...}
+    const keys = Object.keys(value);
+    return new Uint8Array(keys.map(k => (value as Record<string, number>)[k]));
+  }
+  return new Uint8Array(0);
 }
 
 async function resolveAgentUrl(discovery: Erc8004Discovery | null): Promise<string> {
@@ -175,7 +277,7 @@ async function initiateAdmission(
   teeInstanceId: string,
   port: number,
   config: ProtocolConfig,
-): Promise<void> {
+): Promise<AdmissionResultData | null> {
   console.log(`[guardian] initiating admission to ${agentBaseUrl}`);
 
   // Self-reported RTMR3 — read from TEE path or env var
@@ -219,15 +321,32 @@ async function initiateAdmission(
       const result = await res.json() as {
         accepted: boolean;
         reason?: string;
-        vaultKey?: unknown;
-        dbSnapshot?: unknown;
+        primaryX25519PublicKey?: unknown;
+        primaryEd25519PublicKey?: unknown;
+        vaultKey?: WrappedKey;
+        dbSnapshot?: DbSnapshot;
       };
 
       if (result.accepted) {
         console.log('[guardian] admission accepted by primary agent');
-        // TODO: Phase 12 — unwrap vault key and apply DB snapshot
-        console.log('[guardian] vault key and snapshot received — TODO: apply');
-        return;
+
+        if (!result.vaultKey || !result.dbSnapshot || !result.primaryX25519PublicKey) {
+          console.error('[guardian] admission accepted but missing vault key, snapshot, or primary keys');
+          return null;
+        }
+
+        // Compute shared secret and unwrap vault key
+        const primaryX25519 = deserializeKey(result.primaryX25519PublicKey);
+        const sharedSecret = session.computeSharedSecret(primaryX25519);
+        const unwrappedVaultKey = session.unwrapVaultKey(result.vaultKey, sharedSecret);
+
+        console.log('[guardian] vault key unwrapped successfully');
+
+        return {
+          vaultKey: unwrappedVaultKey,
+          dbSnapshot: result.dbSnapshot,
+          primaryEd25519PublicKey: deserializeKey(result.primaryEd25519PublicKey),
+        };
       }
 
       console.warn(
@@ -243,7 +362,7 @@ async function initiateAdmission(
           '[guardian] admission hard-rejected — ' +
           'fix configuration and redeploy',
         );
-        return;
+        return null;
       }
     } catch (err) {
       console.warn(
@@ -258,6 +377,7 @@ async function initiateAdmission(
   }
 
   console.error('[guardian] admission failed after all attempts');
+  return null;
 }
 
 async function readRtmr3(): Promise<string> {

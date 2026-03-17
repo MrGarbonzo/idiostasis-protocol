@@ -255,6 +255,7 @@ export class MoltbookAgent {
       config: this.config,
       signer,
       domain: this.domain,
+      snapshotManager: this.snapshotManager ?? undefined,
     };
     this.httpServer = new HttpServer(deps);
 

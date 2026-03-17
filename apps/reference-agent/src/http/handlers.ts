@@ -9,12 +9,14 @@ import type {
   VaultKeyManager,
   PingEnvelope,
   ProtocolConfig,
+  WrappedKey,
+  DbSnapshot,
 } from '@idiostasis/core';
 import {
-  handleBackupReadyRequest,
   ProtocolEventType,
   rotateVaultKey,
   KeyExchangeSession,
+  SnapshotManager,
 } from '@idiostasis/core';
 import type { BackupReadyRequest, VaultKeyTransport } from '@idiostasis/core';
 import type { ERC8004Client, EvmWallet } from '@idiostasis/erc8004-client';
@@ -45,6 +47,8 @@ export interface HandlerDeps {
   config?: ProtocolConfig;
   signer?: (data: Uint8Array) => Promise<Uint8Array>;
   domain?: string;
+  pendingSuccessionSession?: KeyExchangeSession;
+  snapshotManager?: SnapshotManager;
 }
 
 export async function handleStatus(deps: HandlerDeps): Promise<StatusResponse> {
@@ -148,25 +152,56 @@ export async function handleBackupReady(
   deps: HandlerDeps,
   body: unknown,
 ): Promise<Record<string, unknown>> {
-  const req = body as BackupReadyRequest;
   const ownRtmr3 = deps.agentRtmr3 ?? 'dev-measurement';
-  const response = await handleBackupReadyRequest(req, ownRtmr3);
+
+  // Generate session inline so we can store it for use in handleBackupConfirm
+  const session = await KeyExchangeSession.generate();
+  const keys = session.getPublicKeys();
+  deps.pendingSuccessionSession = session;
 
   // Serialize Uint8Array fields to base64 for JSON transport
   return {
-    rtmr3: response.rtmr3,
-    x25519PublicKey: Buffer.from(response.x25519PublicKey).toString('base64'),
-    ed25519PublicKey: Buffer.from(response.ed25519PublicKey).toString('base64'),
-    ed25519Signature: Buffer.from(response.ed25519Signature).toString('base64'),
+    rtmr3: ownRtmr3,
+    x25519PublicKey: Buffer.from(keys.x25519).toString('base64'),
+    ed25519PublicKey: Buffer.from(keys.ed25519).toString('base64'),
+    ed25519Signature: Buffer.from(keys.signature).toString('base64'),
   };
 }
 
 export async function handleBackupConfirm(
   deps: HandlerDeps,
-  _body: unknown,
+  body: unknown,
 ): Promise<{ ok: boolean }> {
   if (!deps.db) {
     return { ok: false };
+  }
+
+  // Unwrap vault key and apply snapshot from guardian
+  const req = body as Record<string, unknown>;
+  if (req.encryptedVaultKey && req.dbSnapshot && deps.pendingSuccessionSession) {
+    const guardianX25519 = deserializeKey(req.guardianX25519PublicKey);
+    if (guardianX25519.length > 0) {
+      const sharedSecret = deps.pendingSuccessionSession.computeSharedSecret(guardianX25519);
+      const receivedVaultKey = deps.pendingSuccessionSession.unwrapVaultKey(
+        req.encryptedVaultKey as WrappedKey,
+        sharedSecret,
+      );
+
+      // Apply snapshot
+      if (deps.snapshotManager) {
+        await deps.snapshotManager.applySnapshot(req.dbSnapshot as DbSnapshot);
+        console.log('[agent] DB snapshot applied from guardian');
+      }
+
+      // Update vault key manager with received key
+      if (deps.vaultKeyManager) {
+        deps.vaultKeyManager.replaceKey(receivedVaultKey);
+        await deps.vaultKeyManager.seal();
+        console.log('[agent] vault key received and sealed');
+      }
+
+      deps.pendingSuccessionSession = undefined;
+    }
   }
 
   deps.db.logEvent(ProtocolEventType.SUCCESSION_COMPLETE);
