@@ -251,6 +251,9 @@ export class MoltbookAgent {
       signer,
       domain: this.domain,
       snapshotManager: this.snapshotManager ?? undefined,
+      onAdmissionComplete: () => {
+        void this.pushSnapshotToGuardians();
+      },
     };
     this.httpServer = new HttpServer(deps);
 
@@ -400,6 +403,35 @@ export class MoltbookAgent {
     }
 
     return 'primary';
+  }
+
+  private async pushSnapshotToGuardians(): Promise<void> {
+    if (!this.db || !this.snapshotManager || !this.admissionService) return;
+    const guardians = this.db.listGuardians('active');
+    if (guardians.length === 0) return;
+
+    const signer = createSigner();
+    const snapshot = await this.snapshotManager.createSnapshot(signer);
+
+    for (const guardian of guardians) {
+      try {
+        const url = guardian.networkAddress.startsWith('http')
+          ? `${guardian.networkAddress}/recovery`
+          : `http://${guardian.networkAddress}/recovery`;
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ snapshot }),
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (res.ok) {
+          console.log(`[agent] snapshot pushed to guardian ${guardian.teeInstanceId.slice(0, 8)}`);
+        }
+      } catch (err) {
+        console.warn(`[agent] snapshot push to guardian ${guardian.id} failed: ${err}`);
+      }
+    }
   }
 
   private async initiateBackupAdmission(): Promise<void> {

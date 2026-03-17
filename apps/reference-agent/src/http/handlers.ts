@@ -49,6 +49,7 @@ export interface HandlerDeps {
   domain?: string;
   pendingSuccessionSession?: KeyExchangeSession;
   snapshotManager?: SnapshotManager;
+  onAdmissionComplete?: () => void;
 }
 
 export async function handleStatus(deps: HandlerDeps): Promise<StatusResponse> {
@@ -130,7 +131,11 @@ export async function handleAdmission(
     );
   }
 
-  return deps.admissionService.handleAdmissionRequest(admissionReq);
+  const result = await deps.admissionService.handleAdmissionRequest(admissionReq);
+  if (result.accepted) {
+    deps.onAdmissionComplete?.();
+  }
+  return result;
 }
 
 export async function handleEvmAddress(

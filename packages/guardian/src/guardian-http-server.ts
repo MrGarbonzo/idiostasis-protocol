@@ -30,6 +30,7 @@ export class GuardianHttpServer {
     private readonly onAdmission: OnAdmissionReceived,
     private readonly snapshotProvider: () => Promise<DbSnapshot | null>,
     private readonly onVaultKeyUpdate?: OnVaultKeyUpdate,
+    private readonly onSnapshotUpdate?: (snapshot: DbSnapshot) => Promise<void>,
   ) {
     this.app = express();
     this.app.use(express.json());
@@ -62,34 +63,14 @@ export class GuardianHttpServer {
     }));
 
     this.app.post('/recovery', asyncWrap(async (req, res) => {
-      // Validate identity via x-agent-envelope header
-      const envelopeHeader = req.headers['x-agent-envelope'];
-      if (!envelopeHeader) {
-        res.status(401).json({ error: 'missing x-agent-envelope header' });
+      const { snapshot } = req.body as { snapshot?: DbSnapshot };
+      if (!snapshot || !this.onSnapshotUpdate) {
+        res.status(400).json({ error: 'missing snapshot or handler not set' });
         return;
       }
-
-      let envelope: PingEnvelope;
-      try {
-        envelope = JSON.parse(envelopeHeader as string) as PingEnvelope;
-      } catch {
-        res.status(401).json({ error: 'invalid x-agent-envelope header' });
-        return;
-      }
-
-      if (!envelope.teeInstanceId || !envelope.timestamp || !envelope.nonce || !envelope.signature) {
-        res.status(401).json({ error: 'incomplete envelope in header' });
-        return;
-      }
-
-      // In DEV_MODE, accept without signature verification
-      if (process.env.DEV_MODE !== 'true') {
-        // TODO: verify envelope signature against stored peer public key
-        console.warn('[guardian-http] signature verification not yet implemented for /recovery');
-      }
-
-      const snapshot = await this.snapshotProvider();
-      res.json({ snapshot });
+      await this.onSnapshotUpdate(snapshot);
+      console.log('[guardian] DB snapshot updated from primary push');
+      res.json({ ok: true });
     }));
 
     this.app.post('/api/vault-key-update', asyncWrap(async (req, res) => {

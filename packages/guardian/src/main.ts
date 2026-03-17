@@ -127,8 +127,15 @@ export async function startGuardian(): Promise<void> {
     return snapshotManager.createSnapshot(dummySigner);
   };
 
+  const onSnapshotUpdate = async (snapshot: DbSnapshot) => {
+    if (snapshotManager && snapshot) {
+      await snapshotManager.applySnapshot(snapshot);
+      console.log('[guardian] snapshot applied — DB updated');
+    }
+  };
+
   // Start Express HTTP server
-  const httpServer = new GuardianHttpServer(port, liveness, onAdmission, snapshotProvider);
+  const httpServer = new GuardianHttpServer(port, liveness, onAdmission, snapshotProvider, undefined, onSnapshotUpdate);
   await httpServer.start();
 
   console.log(`[guardian] ready, teeInstanceId=${teeInstanceId}, waiting for primary admission`);
