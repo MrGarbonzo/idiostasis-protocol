@@ -115,11 +115,6 @@ export class MoltbookAgent {
         }
       })();
 
-    if (!this.db.getConfig('agent_rtmr3')) {
-      this.db.setConfig('agent_rtmr3', this.agentRtmr3);
-      console.log(`[agent] RTMR3 locked: ${this.agentRtmr3}`);
-    }
-
     // 7b. Resolve domain for ERC-8004 — try TLS cert on port 29343 (primary only)
     if (this.role === 'primary' && this.domain === 'localhost') {
       const tlsDomain = await resolveSecretvmDomainFromTls();

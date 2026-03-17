@@ -159,13 +159,28 @@ export class AdmissionService {
         }
       }
     } else {
-      const agentRtmr3 = this.db.getConfig('agent_rtmr3');
-      const approvedList = agentRtmr3
-        ? [agentRtmr3, ...this.config.agentApprovedRtmr3]
-        : this.config.agentApprovedRtmr3;
-      if (!approvedList.includes(verifiedRtmr3)) {
+      // backup_agent — auto-lock on first admission, same pattern as guardian
+      const lockedBackupRtmr3 = this.db.getConfig('backup_rtmr3');
+
+      if (!lockedBackupRtmr3) {
+        // First backup ever — lock its RTMR3 as canonical
+        this.db.setConfig('backup_rtmr3', verifiedRtmr3);
+        console.warn(
+          `[admission] FIRST BACKUP: locking backup RTMR3 to ` +
+          `${verifiedRtmr3.slice(0, 16)}... ` +
+          `teeInstanceId=${req.teeInstanceId}`,
+        );
+        // Continue — this backup is admitted
+      } else if (lockedBackupRtmr3 !== verifiedRtmr3) {
+        // Subsequent backup — must match the locked value
+        console.warn(
+          `[admission] backup RTMR3 mismatch: ` +
+          `expected ${lockedBackupRtmr3.slice(0, 16)}... ` +
+          `got ${verifiedRtmr3.slice(0, 16)}...`,
+        );
         return { accepted: false, reason: 'rtmr3_mismatch' };
       }
+      // lockedBackupRtmr3 === verifiedRtmr3 — matches, continue
     }
 
     // 5. Key exchange
