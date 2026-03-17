@@ -300,7 +300,7 @@ async function initiateAdmission(
 
     const body = JSON.stringify({
       role: 'guardian',
-      networkAddress: `${process.env.SECRETVM_DOMAIN ?? 'localhost'}:${port}`,
+      networkAddress: `http://source-ip:${port}`,
       teeInstanceId,
       nonce,
       timestamp,

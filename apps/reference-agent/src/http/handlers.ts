@@ -120,6 +120,16 @@ export async function handleAdmission(
     timestamp: (req.timestamp as number) ?? Date.now(),
   };
 
+  // If guardian sent 'source-ip' sentinel, replace with actual source IP
+  if (admissionReq.role === 'guardian' &&
+      admissionReq.networkAddress.includes('source-ip')) {
+    admissionReq.networkAddress =
+      admissionReq.networkAddress.replace('source-ip', sourceIp);
+    console.log(
+      `[admission] resolved guardian network address to ${admissionReq.networkAddress}`
+    );
+  }
+
   return deps.admissionService.handleAdmissionRequest(admissionReq);
 }
 
