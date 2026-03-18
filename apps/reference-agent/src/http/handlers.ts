@@ -202,17 +202,19 @@ export async function handleBackupConfirm(
         sharedSecret,
       );
 
-      // Apply snapshot
-      if (deps.snapshotManager) {
-        await deps.snapshotManager.applySnapshot(req.dbSnapshot as DbSnapshot);
-        console.log('[agent] DB snapshot applied from guardian');
-      }
-
-      // Update vault key manager with received key
+      // Update vault key FIRST — needed before snapshot can be decrypted
       if (deps.vaultKeyManager) {
         deps.vaultKeyManager.replaceKey(receivedVaultKey);
         await deps.vaultKeyManager.seal();
         console.log('[agent] vault key received and sealed');
+      }
+
+      // Apply snapshot with the RECEIVED vault key (not backup's old random key)
+      if (deps.db) {
+        const snapshotMgr = new SnapshotManager(deps.db, receivedVaultKey, deps.teeInstanceId);
+        await snapshotMgr.applySnapshot(req.dbSnapshot as DbSnapshot);
+        deps.snapshotManager = snapshotMgr;
+        console.log('[agent] DB snapshot applied from guardian');
       }
 
       deps.pendingSuccessionSession = undefined;
