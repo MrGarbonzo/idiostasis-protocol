@@ -4,7 +4,7 @@ import { baseSepolia } from 'viem/chains';
 async function main() {
 
 const REGISTRY = '0x8004A818BFB912233c491871b3d84c89A494BD9e';
-const TOKEN_ID = 2130;
+const TOKEN_ID = 2138;
 
 const ABI = [{
   type: 'function',
