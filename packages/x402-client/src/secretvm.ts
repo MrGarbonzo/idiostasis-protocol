@@ -3,7 +3,7 @@ import type { X402Client } from './client.js';
 
 export interface EvmSigningWallet {
   address: string;
-  signMessage(hash: string): Promise<string>;
+  signMessage(message: string | Uint8Array): Promise<string>;
 }
 
 export interface CreateVmParams {
@@ -76,12 +76,36 @@ export class SecretVmClient {
     const timestamp = String(Date.now());
     const payload = `${method}${path}${body}${timestamp}`;
     const requestHash = sha256hex(payload);
-    const signature = await this.wallet.signMessage(requestHash);
+    const hashBytes = Buffer.from(requestHash, 'hex');
+    const signature = await this.wallet.signMessage(hashBytes);
     return {
       'x-agent-address': this.wallet.address,
       'x-agent-signature': signature,
       'x-agent-timestamp': timestamp,
     };
+  }
+
+  async ensureRegistered(): Promise<void> {
+    const path = '/api/agent/balance';
+    const headers = await this.buildHeaders('GET', path, '');
+    const res = await this.http.fetch(`${this.baseUrl}${path}`, {
+      method: 'GET',
+      headers: headers as unknown as Record<string, string>,
+    });
+
+    if (res.status === 404) {
+      console.log('[secretvm] agent not registered — registering...');
+      const registerPath = '/api/agent/register';
+      const registerHeaders = await this.buildHeaders('POST', registerPath, '');
+      const registerRes = await this.http.fetch(`${this.baseUrl}${registerPath}`, {
+        method: 'POST',
+        headers: registerHeaders as unknown as Record<string, string>,
+      });
+      if (!registerRes.ok && registerRes.status !== 409) {
+        throw new Error(`SecretVM registration failed: ${registerRes.status} ${await registerRes.text()}`);
+      }
+      console.log('[secretvm] agent registered successfully');
+    }
   }
 
   async getBalance(): Promise<number> {
@@ -129,6 +153,7 @@ export class SecretVmClient {
   }
 
   async createVm(params: CreateVmParams): Promise<VmStatus> {
+    await this.ensureRegistered();
     const path = '/api/vm/create';
     const composeBytes = new TextEncoder().encode(params.dockerComposeYaml);
 

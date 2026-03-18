@@ -211,8 +211,11 @@ export class MoltbookAgent {
       const mnemonic = evmMnemonic;
       const x402Wallet = {
         address: this.evmWallet.address,
-        signMessage: async (message: string) => {
+        signMessage: async (message: string | Uint8Array) => {
           const account = mnemonicToAccount(mnemonic);
+          if (message instanceof Uint8Array) {
+            return account.signMessage({ message: { raw: message } });
+          }
           return account.signMessage({ message });
         },
       };
@@ -223,10 +226,13 @@ export class MoltbookAgent {
 
       const evmSigningWallet: EvmSigningWallet = {
         address: this.evmWallet.address,
-        signMessage: (message: string) => x402Wallet.signMessage(message),
+        signMessage: (message: string | Uint8Array) => x402Wallet.signMessage(message),
       };
       this.secretvmClient = new SecretVmClient(evmSigningWallet, this.x402Client);
 
+      await this.secretvmClient.ensureRegistered().catch(err =>
+        console.warn('[agent] SecretVM registration check failed:', err)
+      );
       console.log('[agent] x402 (Base/EVM) and SecretVM clients initialized');
     } else if (!this.evmWallet) {
       console.warn('[agent] No EVM credentials — x402 and SecretVM disabled');
@@ -387,7 +393,10 @@ export class MoltbookAgent {
 
     const x402Wallet = {
       address: account.address,
-      signMessage: async (message: string) => {
+      signMessage: async (message: string | Uint8Array) => {
+        if (message instanceof Uint8Array) {
+          return account.signMessage({ message: { raw: message } });
+        }
         return account.signMessage({ message });
       },
     };
@@ -399,10 +408,13 @@ export class MoltbookAgent {
 
     const evmSigningWallet: EvmSigningWallet = {
       address: account.address,
-      signMessage: (message: string) => x402Wallet.signMessage(message),
+      signMessage: (message: string | Uint8Array) => x402Wallet.signMessage(message),
     };
 
     this.secretvmClient = new SecretVmClient(evmSigningWallet, this.x402Client);
+    await this.secretvmClient.ensureRegistered().catch(err =>
+      console.warn('[agent] SecretVM registration check failed:', err)
+    );
     console.log('[agent] x402 and SecretVM clients initialized post-succession');
   }
 
