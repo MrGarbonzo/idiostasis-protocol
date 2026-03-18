@@ -79,7 +79,7 @@ export class MoltbookAgent {
     this.db = new ProtocolDatabase(dbPath, vaultKey);
 
     // 5. Initialize state adapter
-    const handle = process.env.MOLTBOOK_HANDLE ?? 'testtest2';
+    const handle = process.env.MOLTBOOK_HANDLE ?? 'testagent';
     const displayName = process.env.MOLTBOOK_DISPLAY_NAME ?? 'Idiostasis Agent';
     this.stateAdapter = new MoltbookStateAdapter(handle, displayName);
 
@@ -182,7 +182,7 @@ export class MoltbookAgent {
         try {
           const port = process.env.PORT ?? '3001';
           const result = await this.erc8004Client.register({
-            name: process.env.MOLTBOOK_HANDLE ?? 'idiostasis-agent',
+            name: process.env.MOLTBOOK_HANDLE ?? 'testagent',
             description: 'Idiostasis Protocol reference agent',
             services: [
               { name: 'teequote', endpoint: `https://${this.domain}:29343/cpu.html` },
