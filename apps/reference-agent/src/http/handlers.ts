@@ -320,17 +320,27 @@ export async function handleBackupConfirm(
     }
   }
 
-  // Update ERC-8004 registry endpoint after succession
+  // Update ERC-8004 registry endpoints after succession
+  console.log(`[agent] ERC-8004 update: client=${!!deps.erc8004Client} tokenId=${deps.erc8004TokenId} wallet=${!!deps.evmWallet} domain=${deps.domain}`);
   if (deps.erc8004Client && deps.erc8004TokenId && deps.evmWallet) {
     try {
       const port = process.env.PORT ?? '3001';
-      const newEndpoint = deps.domain && deps.domain !== 'localhost'
-        ? `http://${deps.domain}:${port}/discover`
-        : `http://localhost:${port}/discover`;
+      const domain = deps.domain && deps.domain !== 'localhost'
+        ? deps.domain : 'localhost';
+
       await deps.erc8004Client.updateEndpoint(
-        deps.erc8004TokenId, 'discovery', newEndpoint, deps.evmWallet,
+        deps.erc8004TokenId, 'discovery',
+        `http://${domain}:${port}/discover`, deps.evmWallet,
       );
-      console.log('[agent] ERC-8004 endpoint updated — succession complete');
+      await deps.erc8004Client.updateEndpoint(
+        deps.erc8004TokenId, 'workload',
+        `http://${domain}:${port}/workload`, deps.evmWallet,
+      );
+      await deps.erc8004Client.updateEndpoint(
+        deps.erc8004TokenId, 'teequote',
+        `https://${domain}:29343/cpu.html`, deps.evmWallet,
+      );
+      console.log(`[agent] ERC-8004 all endpoints updated to ${domain} — succession complete`);
     } catch (err) {
       console.warn(`[agent] ERC-8004 endpoint update failed (non-fatal): ${err}`);
     }
