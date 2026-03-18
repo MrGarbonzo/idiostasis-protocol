@@ -10,6 +10,7 @@ import {
   handleDiscover,
   handleBackupReady,
   handleBackupConfirm,
+  handleNetworkStatus,
 } from './handlers.js';
 
 type AsyncHandler = (req: Request, res: Response) => Promise<void>;
@@ -70,6 +71,10 @@ export class HttpServer {
 
     this.app.post('/api/backup/confirm', asyncWrap(async (req, res) => {
       res.json(await handleBackupConfirm(this.deps, req.body));
+    }));
+
+    this.app.get('/network-status', asyncWrap(async (_req, res) => {
+      res.json(await handleNetworkStatus(this.deps));
     }));
 
     // Error handler

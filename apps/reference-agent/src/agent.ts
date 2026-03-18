@@ -295,8 +295,7 @@ export class MoltbookAgent {
     }
 
     // Start autonomous guardian manager (primary only)
-    const secretvmApiKey = process.env.SECRETVM_API_KEY;
-    if (this.role === 'primary' && this.secretvmClient && this.db && secretvmApiKey) {
+    if (this.role === 'primary' && this.secretvmClient && this.db) {
       const guardianVmClient = {
         createVm: async (params: { name: string; dockerCompose: Uint8Array }) => {
           const result = await this.secretvmClient!.createVm({
@@ -333,7 +332,7 @@ export class MoltbookAgent {
     } else if (this.role === 'primary') {
       console.warn(
         '[agent] Autonomous guardian manager disabled — ' +
-        'SECRETVM_API_KEY not set',
+        'no SecretVM client',
       );
     }
 

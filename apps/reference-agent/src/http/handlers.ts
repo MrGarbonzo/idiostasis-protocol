@@ -347,6 +347,40 @@ export async function handleBackupConfirm(
   return { ok: true };
 }
 
+export async function handleNetworkStatus(
+  deps: HandlerDeps,
+): Promise<Record<string, unknown>> {
+  if (!deps.db) {
+    return { guardians: 0, backups: 0, guardianDetails: [], backupDetails: [] };
+  }
+
+  const guardians = deps.db.listGuardians('active');
+  const backups = deps.db.listBackupAgents('standby');
+
+  return {
+    agent: {
+      teeInstanceId: deps.teeInstanceId,
+      role: deps.role,
+      domain: deps.domain ?? 'unknown',
+    },
+    network: {
+      guardians: guardians.length,
+      backups: backups.length,
+    },
+    guardianDetails: guardians.map(g => ({
+      teeInstanceId: g.teeInstanceId.slice(0, 8),
+      provisionedBy: g.provisionedBy,
+      lastSeenAgo: `${Math.round((Date.now() - new Date(g.lastSeenAt).getTime()) / 1000)}s ago`,
+    })),
+    backupDetails: backups.map(b => ({
+      teeInstanceId: b.teeInstanceId.slice(0, 8),
+      heartbeatStreak: b.heartbeatStreak,
+      lastHeartbeatAgo: `${Math.round((Date.now() - new Date(b.lastHeartbeatAt).getTime()) / 1000)}s ago`,
+    })),
+    timestamp: new Date().toISOString(),
+  };
+}
+
 function deserializeKey(value: unknown): Uint8Array {
   if (value instanceof Uint8Array) return value;
   if (Buffer.isBuffer(value)) return new Uint8Array(value);
