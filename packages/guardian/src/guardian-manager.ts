@@ -93,9 +93,19 @@ export class AutonomousGuardianManager {
   }
 
   private async provisionGuardian(): Promise<void> {
+    const composeUrl = process.env.GUARDIAN_COMPOSE_URL
+      ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-guardian.yml';
+
+    const res = await fetch(composeUrl, { signal: AbortSignal.timeout(15_000) });
+    if (!res.ok) throw new Error(`Failed to fetch guardian compose: ${res.status}`);
+    const composeYaml = await res.text();
+    const composeBytes = new TextEncoder().encode(composeYaml);
+
+    console.log(`[guardian-manager] fetched guardian compose (${composeBytes.length} bytes)`);
+
     const result = await this.secretvmClient.createVm({
-      name: 'guardian-agent-owned',
-      dockerCompose: new Uint8Array(0),
+      name: `guardian-agent-${Date.now()}`,
+      dockerCompose: composeBytes,
     });
 
     const now = new Date();
