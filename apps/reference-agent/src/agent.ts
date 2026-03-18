@@ -254,6 +254,11 @@ export class MoltbookAgent {
       onAdmissionComplete: () => {
         void this.pushSnapshotToGuardians();
       },
+      onSuccessionComplete: () => {
+        if (this.secretvmClient && this.db) {
+          this.startGuardianManager();
+        }
+      },
     };
     this.httpServer = new HttpServer(deps);
 
@@ -296,39 +301,7 @@ export class MoltbookAgent {
 
     // Start autonomous guardian manager (primary only)
     if (this.role === 'primary' && this.secretvmClient && this.db) {
-      const guardianVmClient = {
-        createVm: async (params: { name: string; dockerCompose: Uint8Array }) => {
-          const result = await this.secretvmClient!.createVm({
-            name: params.name,
-            vmTypeId: 'standard',
-            dockerComposeYaml: new TextDecoder().decode(params.dockerCompose),
-            fsPersistence: true,
-          });
-          return { vmId: result.vmId, domain: result.vmDomain };
-        },
-        getVmStatus: async (vmId: string) => {
-          const status = await this.secretvmClient!.getVmStatus(vmId);
-          return { status: status.status };
-        },
-        stopVm: (vmId: string) => this.secretvmClient!.stopVm(vmId),
-      };
-
-      this.guardianManager = new AutonomousGuardianManager(
-        this.db,
-        this.config,
-        guardianVmClient,
-      );
-
-      await this.guardianManager.evaluate().catch(err =>
-        console.error('[guardian-manager] initial evaluate() error:', err)
-      );
-      setInterval(
-        () => this.guardianManager!.evaluate().catch(err =>
-          console.error('[guardian-manager] evaluate() error:', err)
-        ),
-        this.config.heartbeatIntervalMs,
-      );
-      console.log('[agent] Autonomous guardian manager started');
+      this.startGuardianManager();
     } else if (this.role === 'primary') {
       console.warn(
         '[agent] Autonomous guardian manager disabled — ' +
@@ -354,6 +327,44 @@ export class MoltbookAgent {
     await this.httpServer?.stop();
     this.db?.close();
     console.log('[agent] shutdown complete');
+  }
+
+  private startGuardianManager(): void {
+    if (!this.secretvmClient || !this.db) return;
+
+    const guardianVmClient = {
+      createVm: async (params: { name: string; dockerCompose: Uint8Array }) => {
+        const result = await this.secretvmClient!.createVm({
+          name: params.name,
+          vmTypeId: 'standard',
+          dockerComposeYaml: new TextDecoder().decode(params.dockerCompose),
+          fsPersistence: true,
+        });
+        return { vmId: result.vmId, domain: result.vmDomain };
+      },
+      getVmStatus: async (vmId: string) => {
+        const status = await this.secretvmClient!.getVmStatus(vmId);
+        return { status: status.status };
+      },
+      stopVm: (vmId: string) => this.secretvmClient!.stopVm(vmId),
+    };
+
+    this.guardianManager = new AutonomousGuardianManager(
+      this.db,
+      this.config,
+      guardianVmClient,
+    );
+
+    void this.guardianManager.evaluate().catch(err =>
+      console.error('[guardian-manager] initial evaluate() error:', err)
+    );
+    setInterval(
+      () => this.guardianManager!.evaluate().catch(err =>
+        console.error('[guardian-manager] evaluate() error:', err)
+      ),
+      this.config.heartbeatIntervalMs,
+    );
+    console.log('[agent] Autonomous guardian manager started');
   }
 
   private async resolveRole(): Promise<string> {

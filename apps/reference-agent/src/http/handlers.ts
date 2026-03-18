@@ -50,6 +50,7 @@ export interface HandlerDeps {
   pendingSuccessionSession?: KeyExchangeSession;
   snapshotManager?: SnapshotManager;
   onAdmissionComplete?: () => void;
+  onSuccessionComplete?: () => void;
 }
 
 export async function handleStatus(deps: HandlerDeps): Promise<StatusResponse> {
@@ -343,7 +344,10 @@ export async function handleBackupConfirm(
     }
   }
 
+  deps.role = 'primary';
+  console.log('[agent] role updated to primary');
   console.log('[agent] Succession complete — now primary');
+  deps.onSuccessionComplete?.();
   return { ok: true };
 }
 
