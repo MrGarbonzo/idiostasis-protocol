@@ -79,7 +79,7 @@ export class MoltbookAgent {
     this.db = new ProtocolDatabase(dbPath, vaultKey);
 
     // 5. Initialize state adapter
-    const handle = process.env.MOLTBOOK_HANDLE ?? 'agent';
+    const handle = process.env.MOLTBOOK_HANDLE ?? 'testtest2';
     const displayName = process.env.MOLTBOOK_DISPLAY_NAME ?? 'Idiostasis Agent';
     this.stateAdapter = new MoltbookStateAdapter(handle, displayName);
 

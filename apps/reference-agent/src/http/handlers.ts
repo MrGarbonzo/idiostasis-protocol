@@ -221,6 +221,22 @@ export async function handleBackupConfirm(
     }
   }
 
+  // Re-initialize EVM wallet from the now-populated DB
+  if (!deps.evmWallet && deps.db) {
+    const mnemonic = deps.db.getConfig('evm_mnemonic');
+    if (mnemonic) {
+      const { mnemonicToAccount } = await import('viem/accounts');
+      const account = mnemonicToAccount(mnemonic);
+      deps.evmWallet = {
+        address: account.address,
+        account,
+        signTransaction: async (tx: unknown) => account.signTransaction(tx as any),
+      };
+      deps.evmAddress = account.address;
+      console.log(`[agent] EVM wallet restored from DB: ${account.address}`);
+    }
+  }
+
   deps.db.logEvent(ProtocolEventType.SUCCESSION_COMPLETE);
   console.log('[agent] Succession confirmed — rotating vault key');
 
