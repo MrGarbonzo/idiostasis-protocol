@@ -237,6 +237,27 @@ export async function handleBackupConfirm(
     }
   }
 
+  // Restore ERC-8004 client and token ID from DB
+  if (deps.db && !deps.erc8004TokenId) {
+    const storedTokenId = deps.db.getConfig('erc8004_token_id');
+    if (storedTokenId) {
+      deps.erc8004TokenId = parseInt(storedTokenId, 10);
+      console.log(`[agent] ERC-8004 token ID restored: ${storedTokenId}`);
+    }
+  }
+
+  if (!deps.erc8004Client && deps.config) {
+    const { ERC8004Client } = await import('@idiostasis/erc8004-client');
+    const baseRpcUrl = process.env.BASE_RPC_URL ?? '';
+    const registryAddress = process.env.ERC8004_REGISTRY_ADDRESS
+      ?? '0x8004A818BFB912233c491871b3d84c89A494BD9e';
+    deps.erc8004Client = new ERC8004Client(
+      baseRpcUrl,
+      registryAddress,
+      (process.env.BASE_NETWORK ?? 'base-sepolia') as 'base-sepolia' | 'base',
+    );
+  }
+
   deps.db.logEvent(ProtocolEventType.SUCCESSION_COMPLETE);
   console.log('[agent] Succession confirmed — rotating vault key');
 
