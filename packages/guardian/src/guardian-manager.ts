@@ -19,9 +19,13 @@ export interface SecretVmClient {
 }
 
 export class AutonomousGuardianManager {
+  private static readonly STARTUP_DELAY_MS = 30 * 60 * 1000;
+  private static readonly DEFICIT_DELAY_MS = 10 * 60 * 1000;
+
   private readonly db: ProtocolDatabase;
   private readonly config: ProtocolConfig;
   private readonly secretvmClient: SecretVmClient;
+  private readonly startedAt: number = Date.now();
 
   constructor(
     db: ProtocolDatabase,
@@ -34,62 +38,102 @@ export class AutonomousGuardianManager {
   }
 
   async evaluate(): Promise<void> {
-    const allGuardians = this.db.listGuardians();
-    const failureThresholdMs = this.config.livenessFailureThreshold * this.config.heartbeatIntervalMs;
+    // GUARD 1 — backup RTMR3 must be locked
+    const backupRtmr3Locked = this.db.getConfig('backup_rtmr3');
+    if (!backupRtmr3Locked) {
+      console.log('[guardian-manager] backup RTMR3 not yet locked — skipping');
+      return;
+    }
 
-    // Count all active guardians (external + agent-provisioned)
+    // GUARD 2 — 30 minute startup delay
+    if (Date.now() - this.startedAt < AutonomousGuardianManager.STARTUP_DELAY_MS) {
+      const remaining = Math.round((AutonomousGuardianManager.STARTUP_DELAY_MS - (Date.now() - this.startedAt)) / 60_000);
+      console.log(`[guardian-manager] startup delay — ${remaining}min remaining`);
+      return;
+    }
+
+    const failureThresholdMs = this.config.livenessFailureThreshold * this.config.heartbeatIntervalMs;
+    const allGuardians = this.db.listGuardians();
+
+    // Count total active guardians
     const allActive = allGuardians.filter(g => g.status === 'active');
     const totalActive = allActive.length;
 
-    // Count external stable guardians separately
-    const externalStable = allGuardians.filter(g =>
+    // Count external stable guardians
+    const externalStableCount = allGuardians.filter(g =>
       g.provisionedBy === 'external' &&
       g.status === 'active' &&
       (Date.now() - g.lastSeenAt.getTime()) < failureThresholdMs,
-    );
-    const externalStableCount = externalStable.length;
+    ).length;
 
-    // Find agent-provisioned active guardians
+    // Agent-provisioned active guardians
     const agentGuardians = allGuardians.filter(
       g => g.provisionedBy === 'agent' && g.status === 'active',
     );
 
-    // RULE 1 — If totalActive < 2, provision guardians until we have 2
+    // --- GUARDIAN PROVISIONING ---
+
     if (totalActive < 2) {
-      const needed = 2 - totalActive;
-      console.log(`[guardian-manager] network has ${totalActive} guardians — provisioning ${needed} more`);
-      for (let i = 0; i < needed; i++) {
-        await this.provisionGuardian();
+      // Start or extend deficit timer
+      const deficitSince = this.db.getConfig('guardian_deficit_since');
+      if (!deficitSince) {
+        this.db.setConfig('guardian_deficit_since', String(Date.now()));
+        console.log(`[guardian-manager] guardian deficit detected (${totalActive}/2) — waiting 10min`);
+      } else {
+        const elapsed = Date.now() - parseInt(deficitSince, 10);
+        if (elapsed >= AutonomousGuardianManager.DEFICIT_DELAY_MS) {
+          const needed = 2 - totalActive;
+          console.log(`[guardian-manager] guardian deficit persisted 10min — provisioning ${needed}`);
+          for (let i = 0; i < needed; i++) {
+            await this.provisionGuardian();
+          }
+          this.db.setConfig('guardian_deficit_since', '');
+        }
+      }
+    } else {
+      // Reset deficit timer when recovered
+      this.db.setConfig('guardian_deficit_since', '');
+
+      // RULE 2 — spin down excess agent guardians if total > 3 and external >= 2
+      if (totalActive > 3 && externalStableCount >= 2) {
+        const toRemove = totalActive - 3;
+        console.log(`[guardian-manager] ${totalActive} guardians, spinning down ${toRemove} agent guardian(s)`);
+        for (let i = 0; i < toRemove && i < agentGuardians.length; i++) {
+          await this.deprovisionGuardian(agentGuardians[i]);
+        }
       }
     }
 
-    // RULE 2 — If totalActive > 3 AND externalStable >= 2, spin down agent guardians
-    if (totalActive > 3 && externalStableCount >= 2) {
-      const toRemove = Math.min(totalActive - 3, agentGuardians.length);
-      console.log(`[guardian-manager] ${totalActive} guardians running, ${externalStableCount} external stable — spinning down ${toRemove} agent guardian(s)`);
-      for (let i = 0; i < toRemove; i++) {
-        await this.deprovisionGuardian(agentGuardians[i]);
-      }
-    }
-
-    // --- Backup agent rules ---
+    // --- BACKUP PROVISIONING ---
 
     const backups = this.db.listBackupAgents('standby');
     const totalBackups = backups.length;
     const agentBackupVmId = this.db.getConfig('agent_backup_vm_id');
 
-    // RULE 4 — If no backups, provision one
     if (totalBackups === 0) {
-      if (!agentBackupVmId) {
-        console.log('[guardian-manager] no backup agents — provisioning one');
-        await this.provisionBackup();
+      const backupDeficitSince = this.db.getConfig('backup_deficit_since');
+      if (!backupDeficitSince) {
+        this.db.setConfig('backup_deficit_since', String(Date.now()));
+        console.log('[guardian-manager] no backup agents — waiting 10min before provisioning');
+      } else {
+        const elapsed = Date.now() - parseInt(backupDeficitSince, 10);
+        if (elapsed >= AutonomousGuardianManager.DEFICIT_DELAY_MS) {
+          if (!agentBackupVmId) {
+            console.log('[guardian-manager] backup deficit persisted 10min — provisioning backup');
+            await this.provisionBackup();
+          }
+          this.db.setConfig('backup_deficit_since', '');
+        }
       }
-    }
+    } else {
+      // Reset backup deficit timer
+      this.db.setConfig('backup_deficit_since', '');
 
-    // RULE 5 — If 2+ backups and we have an agent backup, stop it
-    if (totalBackups >= 2 && agentBackupVmId) {
-      console.log(`[guardian-manager] ${totalBackups} backups running — stopping agent backup`);
-      await this.stopBackup(agentBackupVmId);
+      // RULE 5 — stop agent backup if 2+ other backups exist
+      if (totalBackups >= 2 && agentBackupVmId) {
+        console.log(`[guardian-manager] ${totalBackups} backups running — stopping agent backup`);
+        await this.stopBackup(agentBackupVmId);
+      }
     }
   }
 
