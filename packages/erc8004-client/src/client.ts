@@ -132,7 +132,9 @@ export class ERC8004Client {
     }
 
     const newUri = encodeMetadataToDataUri(metadata);
-    return this.contractWrite('setTokenURI', [BigInt(tokenId), newUri], wallet);
+    const txHash = await this.contractWrite('setTokenURI', [BigInt(tokenId), newUri], wallet);
+    await this.txReceipt(txHash);
+    return txHash;
   }
 
   async getRegistration(tokenId: number): Promise<AgentRegistration | null> {
