@@ -85,29 +85,6 @@ export class SecretVmClient {
     };
   }
 
-  async ensureRegistered(): Promise<void> {
-    const path = '/api/agent/balance';
-    const headers = await this.buildHeaders('GET', path, '');
-    const res = await this.http.fetch(`${this.baseUrl}${path}`, {
-      method: 'GET',
-      headers: headers as unknown as Record<string, string>,
-    });
-
-    if (res.status === 404) {
-      console.log('[secretvm] agent not registered — registering...');
-      const registerPath = '/api/agent/register';
-      const registerHeaders = await this.buildHeaders('POST', registerPath, '');
-      const registerRes = await this.http.fetch(`${this.baseUrl}${registerPath}`, {
-        method: 'POST',
-        headers: registerHeaders as unknown as Record<string, string>,
-      });
-      if (!registerRes.ok && registerRes.status !== 409) {
-        throw new Error(`SecretVM registration failed: ${registerRes.status} ${await registerRes.text()}`);
-      }
-      console.log('[secretvm] agent registered successfully');
-    }
-  }
-
   async getBalance(): Promise<number> {
     const path = '/api/agent/balance';
     const headers = await this.buildHeaders('GET', path, '');
@@ -153,7 +130,6 @@ export class SecretVmClient {
   }
 
   async createVm(params: CreateVmParams): Promise<VmStatus> {
-    await this.ensureRegistered();
     const path = '/api/vm/create';
     const composeBytes = new TextEncoder().encode(params.dockerComposeYaml);
 

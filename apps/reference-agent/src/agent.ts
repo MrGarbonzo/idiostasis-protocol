@@ -230,9 +230,6 @@ export class MoltbookAgent {
       };
       this.secretvmClient = new SecretVmClient(evmSigningWallet, this.x402Client);
 
-      await this.secretvmClient.ensureRegistered().catch(err =>
-        console.warn('[agent] SecretVM registration check failed:', err)
-      );
       console.log('[agent] x402 (Base/EVM) and SecretVM clients initialized');
     } else if (!this.evmWallet) {
       console.warn('[agent] No EVM credentials — x402 and SecretVM disabled');
@@ -412,9 +409,6 @@ export class MoltbookAgent {
     };
 
     this.secretvmClient = new SecretVmClient(evmSigningWallet, this.x402Client);
-    await this.secretvmClient.ensureRegistered().catch(err =>
-      console.warn('[agent] SecretVM registration check failed:', err)
-    );
     console.log('[agent] x402 and SecretVM clients initialized post-succession');
   }
 
