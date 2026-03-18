@@ -330,41 +330,80 @@ export class MoltbookAgent {
   }
 
   private startGuardianManager(): void {
-    if (!this.secretvmClient || !this.db) return;
+    if (!this.db) return;
 
-    const guardianVmClient = {
-      createVm: async (params: { name: string; dockerCompose: Uint8Array }) => {
-        const result = await this.secretvmClient!.createVm({
-          name: params.name,
-          vmTypeId: 'standard',
-          dockerComposeYaml: new TextDecoder().decode(params.dockerCompose),
-          fsPersistence: true,
-        });
-        return { vmId: result.vmId, domain: result.vmDomain };
+    // Initialize x402/SecretVM if not already done (post-succession path)
+    void this.initX402AndSecretVM().then(() => {
+      if (!this.secretvmClient) {
+        console.warn('[agent] Autonomous guardian manager disabled — no SecretVM client');
+        return;
+      }
+
+      const guardianVmClient = {
+        createVm: async (params: { name: string; dockerCompose: Uint8Array }) => {
+          const result = await this.secretvmClient!.createVm({
+            name: params.name,
+            vmTypeId: 'standard',
+            dockerComposeYaml: new TextDecoder().decode(params.dockerCompose),
+            fsPersistence: true,
+          });
+          return { vmId: result.vmId, domain: result.vmDomain };
+        },
+        getVmStatus: async (vmId: string) => {
+          const status = await this.secretvmClient!.getVmStatus(vmId);
+          return { status: status.status };
+        },
+        stopVm: (vmId: string) => this.secretvmClient!.stopVm(vmId),
+      };
+
+      this.guardianManager = new AutonomousGuardianManager(
+        this.db!,
+        this.config,
+        guardianVmClient,
+      );
+
+      void this.guardianManager.evaluate().catch(err =>
+        console.error('[guardian-manager] initial evaluate() error:', err)
+      );
+      setInterval(
+        () => this.guardianManager!.evaluate().catch(err =>
+          console.error('[guardian-manager] evaluate() error:', err)
+        ),
+        this.config.heartbeatIntervalMs,
+      );
+      console.log('[agent] Autonomous guardian manager started');
+    });
+  }
+
+  private async initX402AndSecretVM(): Promise<void> {
+    if (this.x402Client && this.secretvmClient) return;
+    if (!this.db) return;
+
+    const mnemonic = this.db.getConfig('evm_mnemonic');
+    if (!mnemonic) return;
+
+    const { mnemonicToAccount } = await import('viem/accounts');
+    const account = mnemonicToAccount(mnemonic);
+
+    const x402Wallet = {
+      address: account.address,
+      signMessage: async (message: string) => {
+        return account.signMessage({ message });
       },
-      getVmStatus: async (vmId: string) => {
-        const status = await this.secretvmClient!.getVmStatus(vmId);
-        return { status: status.status };
-      },
-      stopVm: (vmId: string) => this.secretvmClient!.stopVm(vmId),
     };
 
-    this.guardianManager = new AutonomousGuardianManager(
-      this.db,
-      this.config,
-      guardianVmClient,
+    this.x402Client = new X402Client(
+      x402Wallet,
+      process.env.X402_FACILITATOR_URL,
     );
 
-    void this.guardianManager.evaluate().catch(err =>
-      console.error('[guardian-manager] initial evaluate() error:', err)
-    );
-    setInterval(
-      () => this.guardianManager!.evaluate().catch(err =>
-        console.error('[guardian-manager] evaluate() error:', err)
-      ),
-      this.config.heartbeatIntervalMs,
-    );
-    console.log('[agent] Autonomous guardian manager started');
+    const evmSigningWallet: EvmSigningWallet = {
+      address: account.address,
+      signMessage: (message: string) => x402Wallet.signMessage(message),
+    };
+
+    this.secretvmClient = new SecretVmClient(evmSigningWallet, this.x402Client);
+    console.log('[agent] x402 and SecretVM clients initialized post-succession');
   }
 
   private async resolveRole(): Promise<string> {
