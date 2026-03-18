@@ -160,6 +160,30 @@ export class ERC8004Client {
     }
   }
 
+  async updateAllEndpoints(
+    tokenId: number,
+    services: { name: string; endpoint: string }[],
+    wallet: EvmWallet,
+  ): Promise<string> {
+    const currentUri = await this.contractRead('tokenURI', [BigInt(tokenId)]) as string;
+    const metadata = decodeDataUri(currentUri);
+    if (!metadata) throw new Error(`Cannot decode metadata for token ${tokenId}`);
+
+    for (const { name, endpoint } of services) {
+      const existing = metadata.services.find(s => s.name === name);
+      if (existing) {
+        existing.endpoint = endpoint;
+      } else {
+        metadata.services.push({ name, endpoint });
+      }
+    }
+
+    const newUri = encodeMetadataToDataUri(metadata);
+    const txHash = await this.contractWrite('setAgentURI', [BigInt(tokenId), newUri], wallet);
+    await this.txReceipt(txHash);
+    return txHash;
+  }
+
   async findByRtmr3(_rtmr3: string): Promise<AgentRegistration[]> {
     // TODO: use event indexing — contract does not expose totalSupply
     console.warn('[erc8004] findByRtmr3 not implemented — requires event indexing');

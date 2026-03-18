@@ -328,17 +328,14 @@ export async function handleBackupConfirm(
       const domain = deps.domain && deps.domain !== 'localhost'
         ? deps.domain : 'localhost';
 
-      await deps.erc8004Client.updateEndpoint(
-        deps.erc8004TokenId, 'discovery',
-        `http://${domain}:${port}/discover`, deps.evmWallet,
-      );
-      await deps.erc8004Client.updateEndpoint(
-        deps.erc8004TokenId, 'workload',
-        `http://${domain}:${port}/workload`, deps.evmWallet,
-      );
-      await deps.erc8004Client.updateEndpoint(
-        deps.erc8004TokenId, 'teequote',
-        `https://${domain}:29343/cpu.html`, deps.evmWallet,
+      await deps.erc8004Client.updateAllEndpoints(
+        deps.erc8004TokenId,
+        [
+          { name: 'discovery', endpoint: `http://${domain}:${port}/discover` },
+          { name: 'workload', endpoint: `http://${domain}:${port}/workload` },
+          { name: 'teequote', endpoint: `https://${domain}:29343/cpu.html` },
+        ],
+        deps.evmWallet,
       );
       console.log(`[agent] ERC-8004 all endpoints updated to ${domain} — succession complete`);
     } catch (err) {
