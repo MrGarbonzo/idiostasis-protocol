@@ -39,10 +39,10 @@ const IDENTITY_REGISTRY_ABI = [
   },
   {
     type: 'function' as const,
-    name: 'setTokenURI' as const,
+    name: 'setAgentURI' as const,
     inputs: [
-      { name: 'tokenId', type: 'uint256' as const },
-      { name: 'tokenURI', type: 'string' as const },
+      { name: 'agentId', type: 'uint256' as const },
+      { name: 'newURI', type: 'string' as const },
     ],
     outputs: [],
     stateMutability: 'nonpayable' as const,
@@ -132,7 +132,7 @@ export class ERC8004Client {
     }
 
     const newUri = encodeMetadataToDataUri(metadata);
-    const txHash = await this.contractWrite('setTokenURI', [BigInt(tokenId), newUri], wallet);
+    const txHash = await this.contractWrite('setAgentURI', [BigInt(tokenId), newUri], wallet);
     await this.txReceipt(txHash);
     return txHash;
   }
