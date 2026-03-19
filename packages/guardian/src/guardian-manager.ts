@@ -128,10 +128,8 @@ export class AutonomousGuardianManager {
         } else {
           const elapsed = Date.now() - parseInt(backupDeficitSince, 10);
           if (elapsed >= AutonomousGuardianManager.DEFICIT_DELAY_MS) {
-            if (!agentBackupVmId) {
-              console.log('[guardian-manager] backup deficit persisted 10min — provisioning backup');
-              await this.provisionBackup();
-            }
+            console.log('[guardian-manager] backup deficit persisted 10min — provisioning backup');
+            await this.provisionBackup();
             this.db.setConfig('backup_deficit_since', '');
           }
         }
