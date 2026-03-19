@@ -237,7 +237,15 @@ export class SecretVmClient {
     }
 
     if (!res.ok) throw new Error(`createVm failed: ${await res.text()}`);
-    return await res.json() as VmStatus;
+    const data = await res.json() as Record<string, unknown>;
+    return {
+      id: String(data.id ?? ''),
+      name: String(data.name ?? ''),
+      status: String(data.status ?? 'running'),
+      vmDomain: String(data.vmDomain ?? ''),
+      vmId: String(data.id ?? ''),
+      vmUid: String(data.vm_uid ?? ''),
+    };
   }
 
   /**
