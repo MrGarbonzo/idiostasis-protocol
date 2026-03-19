@@ -6,11 +6,20 @@ export interface PaymentTerms {
   chain: string;
   payTo: string;
   memo?: string;
+  asset?: string;
+  maxTimeout?: number;
+  method?: string;
 }
 
 export interface EvmWallet {
   address: string;
   signMessage(message: string): Promise<string>;
+  signTypedData(params: {
+    domain: Record<string, unknown>;
+    types: Record<string, unknown>;
+    primaryType: string;
+    message: Record<string, unknown>;
+  }): Promise<string>;
 }
 
 export class X402PaymentFailedError extends Error {
@@ -30,5 +39,6 @@ export function buildX402Wallet(privateKey: string): EvmWallet {
   return {
     address: account.address,
     signMessage: (message: string) => account.signMessage({ message }),
+    signTypedData: (params) => account.signTypedData(params as any),
   };
 }

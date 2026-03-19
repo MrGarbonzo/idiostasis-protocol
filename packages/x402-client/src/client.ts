@@ -70,28 +70,89 @@ export class X402Client {
   }
 
   async getPaymentTerms(response: Response): Promise<PaymentTerms> {
-    const body = await response.clone().json() as Record<string, unknown>;
+    const header = response.headers.get('payment-required')
+      ?? response.headers.get('x-payment-required');
 
-    if (!body.amount || !body.currency || !body.payTo) {
-      throw new Error('Invalid 402 response: missing required payment terms fields');
+    if (header) {
+      const decoded = JSON.parse(Buffer.from(header, 'base64').toString()) as Record<string, unknown>;
+      const accepts = decoded.accepts as Record<string, unknown>[] | undefined;
+      const scheme = (accepts?.[0] ?? decoded) as Record<string, unknown>;
+      const extra = scheme.extra as Record<string, unknown> | undefined;
+      return {
+        amount: Number(scheme.maxAmountRequired ?? scheme.amount),
+        currency: 'USDC',
+        chain: String(scheme.network ?? 'eip155:8453'),
+        payTo: String(scheme.payTo ?? extra?.payTo),
+        asset: String(scheme.asset ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
+        maxTimeout: Number(scheme.maxTimeoutSeconds ?? 300),
+        method: String(scheme.scheme ?? 'eip3009'),
+      };
     }
 
+    // Fallback: try body
+    const body = await response.clone().json() as Record<string, unknown>;
     return {
       amount: Number(body.amount),
-      currency: String(body.currency),
-      chain: String(body.chain ?? 'base-sepolia'),
+      currency: String(body.currency ?? 'USDC'),
+      chain: String(body.chain ?? 'eip155:8453'),
       payTo: String(body.payTo),
-      memo: body.memo ? String(body.memo) : undefined,
+      asset: String(body.asset ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
+      maxTimeout: Number(body.maxTimeout ?? 300),
     };
   }
 
   /**
-   * Sign a payment authorization for the given terms.
-   * Returns a compact proof string: `{walletAddress}:{payTo}:{amount}:{signature}`.
+   * Sign an EIP-3009 transferWithAuthorization via EIP-712 typed data.
+   * Returns a JSON x402 payment header with the signature and authorization params.
    */
   private async signPayment(terms: PaymentTerms): Promise<string> {
-    const message = `x402:${terms.payTo}:${terms.amount}:${terms.currency}`;
-    const signature = await this.wallet.signMessage(message);
-    return `${this.wallet.address}:${terms.payTo}:${terms.amount}:${signature}`;
+    const validBefore = BigInt(Math.floor(Date.now() / 1000) + (terms.maxTimeout ?? 300));
+    const nonce = crypto.getRandomValues(new Uint8Array(32));
+    const nonceHex = `0x${Buffer.from(nonce).toString('hex')}` as `0x${string}`;
+
+    const signature = await this.wallet.signTypedData({
+      domain: {
+        name: 'USD Coin',
+        version: '2',
+        chainId: 8453,
+        verifyingContract: (terms.asset ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913') as `0x${string}`,
+      },
+      types: {
+        TransferWithAuthorization: [
+          { name: 'from', type: 'address' },
+          { name: 'to', type: 'address' },
+          { name: 'value', type: 'uint256' },
+          { name: 'validAfter', type: 'uint256' },
+          { name: 'validBefore', type: 'uint256' },
+          { name: 'nonce', type: 'bytes32' },
+        ],
+      },
+      primaryType: 'TransferWithAuthorization',
+      message: {
+        from: this.wallet.address as `0x${string}`,
+        to: terms.payTo as `0x${string}`,
+        value: BigInt(terms.amount),
+        validAfter: 0n,
+        validBefore,
+        nonce: nonceHex,
+      },
+    });
+
+    return JSON.stringify({
+      x402Version: 2,
+      scheme: 'eip3009',
+      network: 'eip155:8453',
+      payload: {
+        signature,
+        authorization: {
+          from: this.wallet.address,
+          to: terms.payTo,
+          value: String(terms.amount),
+          validAfter: '0',
+          validBefore: String(validBefore),
+          nonce: nonceHex,
+        },
+      },
+    });
   }
 }

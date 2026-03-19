@@ -218,6 +218,10 @@ export class MoltbookAgent {
           }
           return account.signMessage({ message });
         },
+        signTypedData: async (params: Record<string, unknown>) => {
+          const account = mnemonicToAccount(mnemonic);
+          return account.signTypedData(params as any);
+        },
       };
       this.x402Client = new X402Client(
         x402Wallet,
@@ -395,6 +399,9 @@ export class MoltbookAgent {
           return account.signMessage({ message: { raw: message } });
         }
         return account.signMessage({ message });
+      },
+      signTypedData: async (params: Record<string, unknown>) => {
+        return account.signTypedData(params as any);
       },
     };
 

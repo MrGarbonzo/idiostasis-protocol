@@ -9,14 +9,30 @@ function makeWallet(): EvmWallet {
   return {
     address: '0xABCDEF1234567890ABCDEF1234567890ABCDEF12',
     async signMessage(message: string) { return `sig:${message.slice(0, 16)}`; },
+    async signTypedData() { return '0xdeadbeef'; },
   };
 }
 
-function makeResponse(status: number, body?: unknown, statusText?: string): Response {
+function makePaymentHeaders(terms: Record<string, unknown>): Headers {
+  const encoded = Buffer.from(JSON.stringify(terms)).toString('base64');
+  const headers = new Headers();
+  headers.set('payment-required', encoded);
+  return headers;
+}
+
+function makeResponse(status: number, body?: unknown, statusText?: string, headers?: Headers): Response {
   return new Response(
     body !== undefined ? JSON.stringify(body) : null,
-    { status, statusText: statusText ?? (status === 200 ? 'OK' : 'Error') },
+    {
+      status,
+      statusText: statusText ?? (status === 200 ? 'OK' : 'Error'),
+      headers: headers ?? undefined,
+    },
   );
+}
+
+function make402WithHeader(terms: Record<string, unknown>): Response {
+  return makeResponse(402, undefined, 'Payment Required', makePaymentHeaders(terms));
 }
 
 function makeFetcher(responses: Response[]): HttpFetcher {
@@ -39,9 +55,18 @@ describe('X402Client', () => {
   });
 
   it('fetchWithPayment pays and retries on 402', async () => {
-    const paymentTerms = { amount: 1000, currency: 'USDC', chain: 'base-sepolia', payTo: '0xdest123' };
+    const terms = {
+      accepts: [{
+        scheme: 'eip3009',
+        network: 'eip155:8453',
+        maxAmountRequired: 1000,
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        payTo: '0xdest123',
+        maxTimeoutSeconds: 300,
+      }],
+    };
     const fetcher = makeFetcher([
-      makeResponse(402, paymentTerms),
+      make402WithHeader(terms),
       makeResponse(200, { data: 'paid' }),
     ]);
     const client = new X402Client(makeWallet(), undefined, fetcher);
@@ -50,10 +75,19 @@ describe('X402Client', () => {
   });
 
   it('fetchWithPayment throws X402PaymentFailedError on second 402', async () => {
-    const paymentTerms = { amount: 1000, currency: 'USDC', chain: 'base-sepolia', payTo: '0xdest123' };
+    const terms = {
+      accepts: [{
+        scheme: 'eip3009',
+        network: 'eip155:8453',
+        maxAmountRequired: 1000,
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        payTo: '0xdest123',
+        maxTimeoutSeconds: 300,
+      }],
+    };
     const fetcher = makeFetcher([
-      makeResponse(402, paymentTerms),
-      makeResponse(402, paymentTerms),
+      make402WithHeader(terms),
+      make402WithHeader(terms),
     ]);
     const client = new X402Client(makeWallet(), undefined, fetcher);
     await assert.rejects(
@@ -74,40 +108,48 @@ describe('X402Client', () => {
     assert.equal(client.is402(makeResponse(500)), false);
   });
 
-  it('getPaymentTerms parses valid payment terms body', async () => {
+  it('getPaymentTerms parses base64 payment-required header', async () => {
     const client = new X402Client(makeWallet());
-    const response = makeResponse(402, {
-      amount: 5000,
-      currency: 'USDC',
-      chain: 'base-sepolia',
-      payTo: '0xrecipient-address',
-      memo: 'test payment',
-    });
-    const terms = await client.getPaymentTerms(response);
-    assert.equal(terms.amount, 5000);
-    assert.equal(terms.currency, 'USDC');
-    assert.equal(terms.chain, 'base-sepolia');
-    assert.equal(terms.payTo, '0xrecipient-address');
-    assert.equal(terms.memo, 'test payment');
+    const terms = {
+      accepts: [{
+        scheme: 'eip3009',
+        network: 'eip155:8453',
+        maxAmountRequired: 5000,
+        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        payTo: '0xrecipient-address',
+        maxTimeoutSeconds: 300,
+      }],
+    };
+    const response = make402WithHeader(terms);
+    const parsed = await client.getPaymentTerms(response);
+    assert.equal(parsed.amount, 5000);
+    assert.equal(parsed.currency, 'USDC');
+    assert.equal(parsed.chain, 'eip155:8453');
+    assert.equal(parsed.payTo, '0xrecipient-address');
+    assert.equal(parsed.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
+    assert.equal(parsed.maxTimeout, 300);
+    assert.equal(parsed.method, 'eip3009');
   });
 
-  it('getPaymentTerms defaults chain to base-sepolia', async () => {
+  it('getPaymentTerms falls back to body parsing', async () => {
     const client = new X402Client(makeWallet());
     const response = makeResponse(402, {
       amount: 100,
       currency: 'USDC',
       payTo: '0xaddr',
     });
-    const terms = await client.getPaymentTerms(response);
-    assert.equal(terms.chain, 'base-sepolia');
+    const parsed = await client.getPaymentTerms(response);
+    assert.equal(parsed.amount, 100);
+    assert.equal(parsed.chain, 'eip155:8453');
   });
 
-  it('buildX402Wallet returns wallet with correct address from private key', () => {
+  it('buildX402Wallet returns wallet with correct address and signTypedData', () => {
     // Known test private key — never use in production
     const testKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
     const wallet = buildX402Wallet(testKey);
     assert.ok(wallet.address.startsWith('0x'));
     assert.equal(wallet.address.length, 42);
     assert.equal(typeof wallet.signMessage, 'function');
+    assert.equal(typeof wallet.signTypedData, 'function');
   });
 });
