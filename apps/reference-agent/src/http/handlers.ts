@@ -135,6 +135,42 @@ export async function handleAdmission(
   const result = await deps.admissionService.handleAdmissionRequest(admissionReq);
   if (result.accepted) {
     deps.onAdmissionComplete?.();
+
+    // Store compose file when RTMR3 locks for this role
+    if (deps.db) {
+      const isFirstGuardian = admissionReq.role === 'guardian'
+        && !deps.db.getConfig('guardian_compose');
+      const isFirstBackup = admissionReq.role === 'backup_agent'
+        && !deps.db.getConfig('agent_compose');
+
+      if (isFirstGuardian) {
+        const url = process.env.GUARDIAN_COMPOSE_URL
+          ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-guardian.yml';
+        fetch(url, { signal: AbortSignal.timeout(15_000) })
+          .then(r => r.ok ? r.text() : null)
+          .then(yaml => {
+            if (yaml && deps.db) {
+              deps.db.setConfig('guardian_compose', yaml);
+              console.log('[agent] guardian compose stored — RTMR3 locked');
+            }
+          })
+          .catch(err => console.warn('[agent] failed to store guardian compose:', err));
+      }
+
+      if (isFirstBackup) {
+        const url = process.env.AGENT_COMPOSE_URL
+          ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-agent.yml';
+        fetch(url, { signal: AbortSignal.timeout(15_000) })
+          .then(r => r.ok ? r.text() : null)
+          .then(yaml => {
+            if (yaml && deps.db) {
+              deps.db.setConfig('agent_compose', yaml);
+              console.log('[agent] agent compose stored — RTMR3 locked');
+            }
+          })
+          .catch(err => console.warn('[agent] failed to store agent compose:', err));
+      }
+    }
   }
   return result;
 }
