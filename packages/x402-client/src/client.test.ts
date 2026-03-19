@@ -57,9 +57,9 @@ describe('X402Client', () => {
   it('fetchWithPayment pays and retries on 402', async () => {
     const terms = {
       accepts: [{
-        scheme: 'eip3009',
+        scheme: 'exact',
         network: 'eip155:8453',
-        maxAmountRequired: 1000,
+        amount: '1000',
         asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         payTo: '0xdest123',
         maxTimeoutSeconds: 300,
@@ -77,9 +77,9 @@ describe('X402Client', () => {
   it('fetchWithPayment throws X402PaymentFailedError on second 402', async () => {
     const terms = {
       accepts: [{
-        scheme: 'eip3009',
+        scheme: 'exact',
         network: 'eip155:8453',
-        maxAmountRequired: 1000,
+        amount: '1000',
         asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
         payTo: '0xdest123',
         maxTimeoutSeconds: 300,
@@ -110,16 +110,15 @@ describe('X402Client', () => {
 
   it('getPaymentTerms parses base64 payment-required header', async () => {
     const client = new X402Client(makeWallet());
-    const terms = {
-      accepts: [{
-        scheme: 'eip3009',
-        network: 'eip155:8453',
-        maxAmountRequired: 5000,
-        asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-        payTo: '0xrecipient-address',
-        maxTimeoutSeconds: 300,
-      }],
+    const schemeObj = {
+      scheme: 'exact',
+      network: 'eip155:8453',
+      amount: '5000',
+      asset: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+      payTo: '0xrecipient-address',
+      maxTimeoutSeconds: 300,
     };
+    const terms = { accepts: [schemeObj] };
     const response = make402WithHeader(terms);
     const parsed = await client.getPaymentTerms(response);
     assert.equal(parsed.amount, 5000);
@@ -128,7 +127,8 @@ describe('X402Client', () => {
     assert.equal(parsed.payTo, '0xrecipient-address');
     assert.equal(parsed.asset, '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913');
     assert.equal(parsed.maxTimeout, 300);
-    assert.equal(parsed.method, 'eip3009');
+    assert.equal(parsed.method, 'exact');
+    assert.deepEqual(parsed.acceptedScheme, schemeObj);
   });
 
   it('getPaymentTerms falls back to body parsing', async () => {

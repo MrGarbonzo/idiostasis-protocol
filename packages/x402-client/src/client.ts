@@ -47,10 +47,11 @@ export class X402Client {
     const terms = await this.getPaymentTerms(response);
     const paymentSignature = await this.signPayment(terms);
 
-    // Retry with payment header
+    // Retry with payment header (base64-encoded, per x402v2 spec)
+    const encoded = Buffer.from(paymentSignature).toString('base64');
     const retryResponse = await this.httpFetcher.fetch(url, {
       headers: {
-        'x-payment': paymentSignature,
+        'payment-signature': encoded,
       },
     });
 
@@ -86,6 +87,7 @@ export class X402Client {
         asset: String(scheme.asset ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
         maxTimeout: Number(scheme.maxTimeoutSeconds ?? 300),
         method: String(scheme.scheme ?? 'eip3009'),
+        acceptedScheme: scheme,
       };
     }
 
@@ -140,8 +142,16 @@ export class X402Client {
 
     return JSON.stringify({
       x402Version: 2,
-      scheme: 'eip3009',
-      network: 'eip155:8453',
+      scheme: 'exact',
+      network: terms.chain ?? 'eip155:8453',
+      accepted: terms.acceptedScheme ?? {
+        scheme: 'exact',
+        network: terms.chain,
+        amount: String(terms.amount),
+        asset: terms.asset,
+        payTo: terms.payTo,
+        maxTimeoutSeconds: terms.maxTimeout ?? 300,
+      },
       payload: {
         signature,
         authorization: {

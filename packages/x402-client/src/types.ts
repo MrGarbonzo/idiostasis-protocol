@@ -9,6 +9,7 @@ export interface PaymentTerms {
   asset?: string;
   maxTimeout?: number;
   method?: string;
+  acceptedScheme?: Record<string, unknown>;
 }
 
 export interface EvmWallet {
