@@ -262,7 +262,7 @@ export class MoltbookAgent {
         void this.pushSnapshotToGuardians();
       },
       onSuccessionComplete: () => {
-        if (this.secretvmClient && this.db) {
+        if (this.db) {
           this.startGuardianManager();
         }
       },
