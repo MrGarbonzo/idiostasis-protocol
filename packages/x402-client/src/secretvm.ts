@@ -137,6 +137,10 @@ export class SecretVmClient {
       };
 
       const paymentSignature = await this.x402Client.signPaymentTerms(terms);
+      const encodedPayment = Buffer.from(paymentSignature).toString('base64');
+
+      // Wait 2s to avoid SecretVM API rate limit (1 req/sec)
+      await new Promise(r => setTimeout(r, 2000));
 
       // Retry with payment-signature header (base64-encoded)
       const retryHeaders = await this.buildHeaders('POST', path, body);
@@ -146,9 +150,28 @@ export class SecretVmClient {
         headers: {
           ...retryHeaders as unknown as Record<string, string>,
           'Content-Type': 'application/json',
-          'payment-signature': Buffer.from(paymentSignature).toString('base64'),
+          'payment-signature': encodedPayment,
         },
       });
+
+      if (retryRes.status === 429) {
+        await new Promise(r => setTimeout(r, 2000));
+        const retryHeaders2 = await this.buildHeaders('POST', path, body);
+        const retryRes2 = await this.http.fetch(`${this.baseUrl}${path}`, {
+          method: 'POST',
+          body,
+          headers: {
+            ...retryHeaders2 as unknown as Record<string, string>,
+            'Content-Type': 'application/json',
+            'payment-signature': encodedPayment,
+          },
+        });
+        if (!retryRes2.ok) {
+          throw new Error(`addFunds payment failed after retry: ${retryRes2.status} ${await retryRes2.text()}`);
+        }
+        console.log('[secretvm] addFunds: x402 payment succeeded (after 429 retry)');
+        return;
+      }
 
       if (!retryRes.ok) {
         throw new Error(`addFunds payment failed: ${retryRes.status} ${await retryRes.text()}`);
