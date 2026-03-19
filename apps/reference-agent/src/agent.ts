@@ -196,6 +196,30 @@ export class MoltbookAgent {
           this.db.setConfig('erc8004_token_id', String(result.tokenId));
           this.db.setConfig('erc8004_domain', this.domain);
           console.log(`[agent] ERC-8004 registered. Token ID: ${result.tokenId}`);
+
+          // Store compose files in DB for autonomous provisioning
+          try {
+            const guardianComposeUrl = process.env.GUARDIAN_COMPOSE_URL
+              ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-guardian.yml';
+            const agentComposeUrl = process.env.AGENT_COMPOSE_URL
+              ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-agent.yml';
+
+            const [guardianRes, agentRes] = await Promise.all([
+              fetch(guardianComposeUrl, { signal: AbortSignal.timeout(15_000) }),
+              fetch(agentComposeUrl, { signal: AbortSignal.timeout(15_000) }),
+            ]);
+
+            if (guardianRes.ok) {
+              this.db.setConfig('guardian_compose', await guardianRes.text());
+              console.log('[agent] guardian compose stored in DB');
+            }
+            if (agentRes.ok) {
+              this.db.setConfig('agent_compose', await agentRes.text());
+              console.log('[agent] agent compose stored in DB');
+            }
+          } catch (err) {
+            console.warn('[agent] failed to store compose files (non-fatal):', err);
+          }
         } catch (err) {
           console.warn(`[agent] ERC-8004 registration failed (non-fatal): ${err}`);
         }

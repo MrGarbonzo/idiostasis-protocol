@@ -347,6 +347,27 @@ export async function handleBackupConfirm(
   deps.role = 'primary';
   console.log('[agent] role updated to primary');
   console.log('[agent] Succession complete — now primary');
+
+  // Store compose files for autonomous provisioning
+  void (async () => {
+    if (!deps.db) return;
+    try {
+      const guardianUrl = process.env.GUARDIAN_COMPOSE_URL
+        ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-guardian.yml';
+      const agentUrl = process.env.AGENT_COMPOSE_URL
+        ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-agent.yml';
+      const [gr, ar] = await Promise.all([
+        fetch(guardianUrl, { signal: AbortSignal.timeout(15_000) }),
+        fetch(agentUrl, { signal: AbortSignal.timeout(15_000) }),
+      ]);
+      if (gr.ok) deps.db.setConfig('guardian_compose', await gr.text());
+      if (ar.ok) deps.db.setConfig('agent_compose', await ar.text());
+      console.log('[agent] compose files stored post-succession');
+    } catch (err) {
+      console.warn('[agent] failed to store compose files post-succession:', err);
+    }
+  })();
+
   deps.onSuccessionComplete?.();
   return { ok: true };
 }

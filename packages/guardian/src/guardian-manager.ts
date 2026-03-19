@@ -138,15 +138,13 @@ export class AutonomousGuardianManager {
   }
 
   private async provisionGuardian(): Promise<void> {
-    const composeUrl = process.env.GUARDIAN_COMPOSE_URL
-      ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-guardian.yml';
-
-    const res = await fetch(composeUrl, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) throw new Error(`Failed to fetch guardian compose: ${res.status}`);
-    const composeYaml = await res.text();
+    const composeYaml = this.db.getConfig('guardian_compose');
+    if (!composeYaml) {
+      throw new Error('guardian_compose not found in DB — agent may not have stored it yet');
+    }
     const composeBytes = new TextEncoder().encode(composeYaml);
 
-    console.log(`[guardian-manager] fetched guardian compose (${composeBytes.length} bytes)`);
+    console.log(`[guardian-manager] using guardian compose from DB (${composeBytes.length} bytes)`);
 
     const result = await this.secretvmClient.createVm({
       name: `guardian-agent-${Date.now()}`,
@@ -193,15 +191,13 @@ export class AutonomousGuardianManager {
   }
 
   private async provisionBackup(): Promise<void> {
-    const composeUrl = process.env.BACKUP_COMPOSE_URL
-      ?? 'https://raw.githubusercontent.com/MrGarbonzo/idiostasis-protocol/main/docker/docker-compose.secretvm-agent.yml';
-
-    const res = await fetch(composeUrl, { signal: AbortSignal.timeout(15_000) });
-    if (!res.ok) throw new Error(`Failed to fetch backup compose: ${res.status}`);
-    const composeYaml = await res.text();
+    const composeYaml = this.db.getConfig('agent_compose');
+    if (!composeYaml) {
+      throw new Error('agent_compose not found in DB — agent may not have stored it yet');
+    }
     const composeBytes = new TextEncoder().encode(composeYaml);
 
-    console.log(`[guardian-manager] fetched backup compose (${composeBytes.length} bytes)`);
+    console.log(`[guardian-manager] using agent compose from DB (${composeBytes.length} bytes)`);
 
     const result = await this.secretvmClient.createVm({
       name: `backup-agent-${Date.now()}`,
