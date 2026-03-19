@@ -324,33 +324,11 @@ export class SecretVmClient {
   }
 
   async stopVm(vmId: string): Promise<void> {
-    const path = `/api/agent/vm/${vmId}`;
-    const headers = await this.buildHeaders('DELETE', path, '');
-
-    const res = await this.http.fetch(`${this.baseUrl}${path}`, {
-      method: 'DELETE',
-      headers: headers as unknown as Record<string, string>,
-    });
-
-    if (res.status === 404) return; // already gone — treat as success
-
-    if (res.status === 405) {
-      // Method not allowed — try POST /stop fallback
-      const stopPath = `/api/agent/vm/${vmId}/stop`;
-      const stopHeaders = await this.buildHeaders('POST', stopPath, '');
-      const stopRes = await this.http.fetch(`${this.baseUrl}${stopPath}`, {
-        method: 'POST',
-        headers: stopHeaders as unknown as Record<string, string>,
-      });
-      if (!stopRes.ok && stopRes.status !== 404) {
-        throw new Error(`stopVm fallback failed: ${stopRes.status}`);
-      }
-      console.log(`[secretvm] stopVm: used POST /stop fallback for ${vmId}`);
-      return;
-    }
-
-    if (!res.ok) throw new Error(`stopVm failed: ${res.status}`);
-    console.log(`[secretvm] VM ${vmId} stopped`);
+    // SecretVM does not expose a stop endpoint to agent wallets.
+    // VMs will run until their balance depletes.
+    // This is a known limitation — log and return.
+    console.warn(`[secretvm] stopVm: no agent stop endpoint available — VM ${vmId} will run until balance depletes`);
+    return;
   }
 }
 
