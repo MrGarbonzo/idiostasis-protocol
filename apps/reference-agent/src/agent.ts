@@ -350,7 +350,7 @@ export class MoltbookAgent {
         createVm: async (params: { name: string; dockerCompose: Uint8Array }) => {
           const result = await this.secretvmClient!.createVm({
             name: params.name,
-            vmTypeId: 'standard',
+            vmTypeId: 'small',
             dockerComposeYaml: new TextDecoder().decode(params.dockerCompose),
             fsPersistence: true,
           });
