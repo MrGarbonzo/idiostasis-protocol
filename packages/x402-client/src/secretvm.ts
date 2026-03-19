@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { X402Client } from './client.js';
+import type { PaymentTerms } from './types.js';
 
 export interface EvmSigningWallet {
   address: string;
@@ -102,7 +103,7 @@ export class SecretVmClient {
     const body = stableStringify({ amount_usdc: String(amountUsdc) });
     const headers = await this.buildHeaders('POST', path, body);
 
-    let res = await this.http.fetch(`${this.baseUrl}${path}`, {
+    const res = await this.http.fetch(`${this.baseUrl}${path}`, {
       method: 'POST',
       body,
       headers: {
@@ -112,18 +113,48 @@ export class SecretVmClient {
     });
 
     if (res.status === 402) {
-      // x402 payment required — use x402Client to pay
-      await this.x402Client.fetchWithPayment(`${this.baseUrl}${path}`);
-      // Retry with fresh headers after payment
+      // Parse payment terms from payment-required header
+      const paymentHeader = res.headers.get('payment-required');
+      if (!paymentHeader) throw new Error('addFunds: 402 with no payment-required header');
+
+      const decoded = JSON.parse(Buffer.from(paymentHeader, 'base64').toString()) as Record<string, unknown>;
+      const accepts = decoded.accepts as Record<string, unknown>[] | undefined;
+      const scheme = accepts?.[0] ?? decoded;
+
+      const payTo = scheme.payTo as string;
+      const amount = scheme.amount as string;
+      const asset = (scheme.asset as string) ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+      const maxTimeout = (scheme.maxTimeoutSeconds as number) ?? 300;
+
+      const terms: PaymentTerms = {
+        amount: Number(amount),
+        currency: 'USDC',
+        chain: (scheme.network as string) ?? 'eip155:8453',
+        payTo,
+        asset,
+        maxTimeout,
+        acceptedScheme: scheme as Record<string, unknown>,
+      };
+
+      const paymentSignature = await this.x402Client.signPaymentTerms(terms);
+
+      // Retry with payment-signature header (base64-encoded)
       const retryHeaders = await this.buildHeaders('POST', path, body);
-      res = await this.http.fetch(`${this.baseUrl}${path}`, {
+      const retryRes = await this.http.fetch(`${this.baseUrl}${path}`, {
         method: 'POST',
         body,
         headers: {
           ...retryHeaders as unknown as Record<string, string>,
           'Content-Type': 'application/json',
+          'payment-signature': Buffer.from(paymentSignature).toString('base64'),
         },
       });
+
+      if (!retryRes.ok) {
+        throw new Error(`addFunds payment failed: ${retryRes.status} ${await retryRes.text()}`);
+      }
+      console.log('[secretvm] addFunds: x402 payment succeeded');
+      return;
     }
 
     if (!res.ok) throw new Error(`addFunds failed: ${await res.text()}`);

@@ -45,7 +45,7 @@ export class X402Client {
 
     // 402 — extract payment terms, sign payment, retry
     const terms = await this.getPaymentTerms(response);
-    const paymentSignature = await this.signPayment(terms);
+    const paymentSignature = await this.signPaymentTerms(terms);
 
     // Retry with payment header (base64-encoded, per x402v2 spec)
     const encoded = Buffer.from(paymentSignature).toString('base64');
@@ -107,7 +107,7 @@ export class X402Client {
    * Sign an EIP-3009 transferWithAuthorization via EIP-712 typed data.
    * Returns a JSON x402 payment header with the signature and authorization params.
    */
-  private async signPayment(terms: PaymentTerms): Promise<string> {
+  async signPaymentTerms(terms: PaymentTerms): Promise<string> {
     const validBefore = BigInt(Math.floor(Date.now() / 1000) + (terms.maxTimeout ?? 300));
     const nonce = crypto.getRandomValues(new Uint8Array(32));
     const nonceHex = `0x${Buffer.from(nonce).toString('hex')}` as `0x${string}`;
