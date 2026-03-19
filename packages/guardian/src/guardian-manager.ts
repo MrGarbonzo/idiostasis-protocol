@@ -74,25 +74,31 @@ export class AutonomousGuardianManager {
     // --- GUARDIAN PROVISIONING ---
 
     if (totalActive < 2) {
-      // Start or extend deficit timer
-      const deficitSince = this.db.getConfig('guardian_deficit_since');
-      if (!deficitSince) {
-        this.db.setConfig('guardian_deficit_since', String(Date.now()));
-        console.log(`[guardian-manager] guardian deficit detected (${totalActive}/2) — waiting 10min`);
+      // Don't provision if we already have a pending VM
+      const pendingVmId = this.db.getConfig('guardian_provisioning_pending');
+      if (pendingVmId) {
+        console.log(`[guardian-manager] guardian VM ${pendingVmId.slice(0, 8)} pending admission — waiting`);
       } else {
-        const elapsed = Date.now() - parseInt(deficitSince, 10);
-        if (elapsed >= AutonomousGuardianManager.DEFICIT_DELAY_MS) {
-          const needed = 2 - totalActive;
-          console.log(`[guardian-manager] guardian deficit persisted 10min — provisioning ${needed}`);
-          for (let i = 0; i < needed; i++) {
-            await this.provisionGuardian();
+        const deficitSince = this.db.getConfig('guardian_deficit_since');
+        if (!deficitSince) {
+          this.db.setConfig('guardian_deficit_since', String(Date.now()));
+          console.log(`[guardian-manager] guardian deficit detected (${totalActive}/2) — waiting 10min`);
+        } else {
+          const elapsed = Date.now() - parseInt(deficitSince, 10);
+          if (elapsed >= AutonomousGuardianManager.DEFICIT_DELAY_MS) {
+            const needed = 2 - totalActive;
+            console.log(`[guardian-manager] guardian deficit persisted 10min — provisioning ${needed}`);
+            for (let i = 0; i < needed; i++) {
+              await this.provisionGuardian();
+            }
+            this.db.setConfig('guardian_deficit_since', '');
           }
-          this.db.setConfig('guardian_deficit_since', '');
         }
       }
     } else {
-      // Reset deficit timer when recovered
+      // Reset deficit timer and pending flag when recovered
       this.db.setConfig('guardian_deficit_since', '');
+      this.db.setConfig('guardian_provisioning_pending', '');
 
       // RULE 2 — spin down excess agent guardians if total > 3 and external >= 2
       if (totalActive > 3 && externalStableCount >= 2) {
@@ -111,23 +117,29 @@ export class AutonomousGuardianManager {
     const agentBackupVmId = this.db.getConfig('agent_backup_vm_id');
 
     if (totalBackups === 0) {
-      const backupDeficitSince = this.db.getConfig('backup_deficit_since');
-      if (!backupDeficitSince) {
-        this.db.setConfig('backup_deficit_since', String(Date.now()));
-        console.log('[guardian-manager] no backup agents — waiting 10min before provisioning');
+      const pendingBackupVmId = this.db.getConfig('backup_provisioning_pending');
+      if (pendingBackupVmId) {
+        console.log(`[guardian-manager] backup VM ${pendingBackupVmId.slice(0, 8)} pending admission — waiting`);
       } else {
-        const elapsed = Date.now() - parseInt(backupDeficitSince, 10);
-        if (elapsed >= AutonomousGuardianManager.DEFICIT_DELAY_MS) {
-          if (!agentBackupVmId) {
-            console.log('[guardian-manager] backup deficit persisted 10min — provisioning backup');
-            await this.provisionBackup();
+        const backupDeficitSince = this.db.getConfig('backup_deficit_since');
+        if (!backupDeficitSince) {
+          this.db.setConfig('backup_deficit_since', String(Date.now()));
+          console.log('[guardian-manager] no backup agents — waiting 10min before provisioning');
+        } else {
+          const elapsed = Date.now() - parseInt(backupDeficitSince, 10);
+          if (elapsed >= AutonomousGuardianManager.DEFICIT_DELAY_MS) {
+            if (!agentBackupVmId) {
+              console.log('[guardian-manager] backup deficit persisted 10min — provisioning backup');
+              await this.provisionBackup();
+            }
+            this.db.setConfig('backup_deficit_since', '');
           }
-          this.db.setConfig('backup_deficit_since', '');
         }
       }
     } else {
-      // Reset backup deficit timer
+      // Reset backup deficit timer and pending flag
       this.db.setConfig('backup_deficit_since', '');
+      this.db.setConfig('backup_provisioning_pending', '');
 
       // RULE 5 — stop agent backup if 2+ other backups exist
       if (totalBackups >= 2 && agentBackupVmId) {
@@ -165,6 +177,7 @@ export class AutonomousGuardianManager {
       agentVmId: result.vmId,
     };
     this.db.upsertGuardian(record);
+    this.db.setConfig('guardian_provisioning_pending', result.vmId);
     this.db.logEvent(ProtocolEventType.GUARDIAN_PROVISIONED, `vm:${result.vmId}`);
   }
 
@@ -205,6 +218,7 @@ export class AutonomousGuardianManager {
     });
 
     this.db.setConfig('agent_backup_vm_id', result.vmId);
+    this.db.setConfig('backup_provisioning_pending', result.vmId);
     console.log(`[guardian-manager] provisioned backup agent VM ${result.vmId}`);
   }
 
