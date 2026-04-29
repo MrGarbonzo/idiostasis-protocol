@@ -10,8 +10,8 @@ export type { PeerRecord } from './peers/registry.js';
 
 export { Erc8004Discovery } from './discovery/erc8004.js';
 
-export { AutonomousGuardianManager } from './guardian-manager.js';
-export type { SecretVmClient, CreateVmParams } from './guardian-manager.js';
+export { AutonomousNetworkManager, AutonomousGuardianManager } from './guardian-manager.js';
+export type { SecretVmClient, CreateVmParams, NetworkManagerParams } from './guardian-manager.js';
 
 export { createHandlers } from './http-server.js';
 export type { AdmissionPayload, OnAdmissionReceived, GuardianHttpHandlers } from './http-server.js';

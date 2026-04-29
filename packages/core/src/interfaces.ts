@@ -183,6 +183,15 @@ export interface ProtocolConfig {
   guardianApprovedRtmr3: string[];
 
   /**
+   * TVL thresholds (USDC) that trigger infrastructure scaling.
+   * Below tier1: base config (1 guardian, 1 backup)
+   * Above tier1: scaled config (2 guardians, 2 backups)
+   * @default 10000
+   * @env TVL_TIER1_USDC
+   */
+  tvlTier1Usdc: number;
+
+  /**
    * PCCS verification endpoints, tried in order on failure.
    * Hard failure only if all endpoints are exhausted (Decision 4).
    * @default ['https://pccs.scrtlabs.com/dcap-tools/quote-parse']

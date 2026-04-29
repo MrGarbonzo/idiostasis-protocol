@@ -46,11 +46,10 @@ export const PEER_STALENESS_MS = 1_800_000;
 
 /**
  * Minimum number of active guardians the agent requires.
- * If external guardians drop below (minGuardianCount - 1), the agent
- * self-provisions its own guardian VM (Decision 8).
+ * Base tier (low TVL) targets 1 guardian; scaled tier targets 2.
  * @env MIN_GUARDIAN_COUNT
  */
-export const MIN_GUARDIAN_COUNT = 3;
+export const MIN_GUARDIAN_COUNT = 1;
 
 /**
  * Maximum random jitter (ms) before backup agent activation during succession.
@@ -72,6 +71,13 @@ export const RE_ATTEST_FAILURE_LIMIT = 2;
  * Tried in order on failure. Hard failure only if all exhausted.
  * Additional endpoints can be added via PCCS_ENDPOINTS env var.
  */
+/**
+ * TVL threshold (USDC) that triggers scaling from base to scaled tier.
+ * Below: 1 guardian + 1 backup. Above: 2 guardians + 2 backups.
+ * @env TVL_TIER1_USDC
+ */
+export const TVL_TIER1_USDC = 10_000;
+
 export const DEFAULT_PCCS_ENDPOINTS: readonly string[] = [
   'https://pccs.scrtlabs.com/dcap-tools/quote-parse',
 ];
@@ -93,6 +99,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     minGuardianCount: parseIntEnv(env.MIN_GUARDIAN_COUNT, MIN_GUARDIAN_COUNT),
     backupJitterMaxMs: parseIntEnv(env.BACKUP_JITTER_MAX_MS, BACKUP_JITTER_MAX_MS),
     reAttestFailureLimit: parseIntEnv(env.RE_ATTEST_FAILURE_LIMIT, RE_ATTEST_FAILURE_LIMIT),
+    tvlTier1Usdc: parseIntEnv(env.TVL_TIER1_USDC, TVL_TIER1_USDC),
     agentApprovedRtmr3: parseCommaSeparated(env.AGENT_APPROVED_RTMR3),
     guardianApprovedRtmr3: parseCommaSeparated(env.GUARDIAN_APPROVED_RTMR3),
     pccsEndpoints: parseCommaSeparatedWithDefault(env.PCCS_ENDPOINTS, [...DEFAULT_PCCS_ENDPOINTS]),

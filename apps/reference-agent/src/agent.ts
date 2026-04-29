@@ -27,7 +27,7 @@ import {
   SecretVmClient,
 } from '@idiostasis/x402-client';
 import type { EvmSigningWallet } from '@idiostasis/x402-client';
-import { AutonomousGuardianManager } from '@idiostasis/guardian';
+import { AutonomousNetworkManager } from '@idiostasis/guardian';
 import { MoltbookStateAdapter } from './state/adapter.js';
 import { MoltbookHealthAdapter } from './health/adapter.js';
 import { MoltbookClient } from './moltbook/client.js';
@@ -54,7 +54,7 @@ export class MoltbookAgent {
   private evmWallet: EvmWallet | null = null;
   private x402Client: X402Client | null = null;
   private secretvmClient: SecretVmClient | null = null;
-  private guardianManager: AutonomousGuardianManager | null = null;
+  private guardianManager: AutonomousNetworkManager | null = null;
   private primaryBaseUrl: string = '';
 
   constructor() {
@@ -363,11 +363,15 @@ export class MoltbookAgent {
         stopVm: (vmId: string) => this.secretvmClient!.stopVm(vmId),
       };
 
-      this.guardianManager = new AutonomousGuardianManager(
-        this.db!,
-        this.config,
-        guardianVmClient,
-      );
+      this.guardianManager = new AutonomousNetworkManager({
+        db: this.db!,
+        config: this.config,
+        secretvmClient: guardianVmClient,
+        getTvlUsdc: async () => {
+          const tvl = this.db?.getConfig('agent_tvl_usdc');
+          return tvl ? parseFloat(tvl) : 0;
+        },
+      });
 
       void this.guardianManager.evaluate().catch(err =>
         console.error('[guardian-manager] initial evaluate() error:', err)
