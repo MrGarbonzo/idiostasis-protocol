@@ -45,13 +45,20 @@ export class X402Client {
 
     // 402 — extract payment terms, sign payment, retry
     const terms = await this.getPaymentTerms(response);
+
+    if (!terms.amount || !isFinite(terms.amount) || terms.amount <= 0) {
+      throw new Error(`x402: invalid payment amount: ${terms.amount} (payTo=${terms.payTo})`);
+    }
+
     const paymentSignature = await this.signPaymentTerms(terms);
 
     // Retry with payment header (base64-encoded, per x402v2 spec)
+    // Send both X-Payment and PAYMENT-SIGNATURE for compatibility
     const encoded = Buffer.from(paymentSignature).toString('base64');
     const retryResponse = await this.httpFetcher.fetch(url, {
       headers: {
-        'payment-signature': encoded,
+        'X-Payment': encoded,
+        'PAYMENT-SIGNATURE': encoded,
       },
     });
 
@@ -91,15 +98,20 @@ export class X402Client {
       };
     }
 
-    // Fallback: try body
+    // Fallback: try body (handles x402v1 format like Gloria AI)
     const body = await response.clone().json() as Record<string, unknown>;
+    const bodyAccepts = body.accepts as Record<string, unknown>[] | undefined;
+    const bodyScheme = (bodyAccepts?.[0] ?? body) as Record<string, unknown>;
+    const bodyExtra = bodyScheme.extra as Record<string, unknown> | undefined;
     return {
-      amount: Number(body.amount),
-      currency: String(body.currency ?? 'USDC'),
-      chain: String(body.chain ?? 'eip155:8453'),
-      payTo: String(body.payTo),
-      asset: String(body.asset ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
-      maxTimeout: Number(body.maxTimeout ?? 300),
+      amount: Number(bodyScheme.maxAmountRequired ?? bodyScheme.amount ?? body.amount),
+      currency: String(bodyScheme.currency ?? 'USDC'),
+      chain: String(bodyScheme.network ?? body.chain ?? 'eip155:8453'),
+      payTo: String(bodyScheme.payTo ?? bodyExtra?.payTo ?? body.payTo),
+      asset: String(bodyScheme.asset ?? body.asset ?? '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913'),
+      maxTimeout: Number(bodyScheme.maxTimeoutSeconds ?? body.maxTimeout ?? 300),
+      method: String(bodyScheme.scheme ?? 'eip3009'),
+      acceptedScheme: bodyScheme,
     };
   }
 
@@ -108,6 +120,9 @@ export class X402Client {
    * Returns a JSON x402 payment header with the signature and authorization params.
    */
   async signPaymentTerms(terms: PaymentTerms): Promise<string> {
+    if (!terms.amount || !isFinite(terms.amount) || terms.amount <= 0) {
+      throw new Error(`x402: cannot sign payment — invalid amount: ${terms.amount}`);
+    }
     const validBefore = BigInt(Math.floor(Date.now() / 1000) + (terms.maxTimeout ?? 300));
     const nonce = crypto.getRandomValues(new Uint8Array(32));
     const nonceHex = `0x${Buffer.from(nonce).toString('hex')}` as `0x${string}`;
