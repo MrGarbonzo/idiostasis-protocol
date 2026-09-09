@@ -1,4 +1,4 @@
-Idiostasis Protocol
+Idiostasis Protocol -  whitepaper can be found here https://github.com/MrGarbonzo/idiostasis-protocol/blob/main/docs/IDIOSTASIS_PROTOCOL_WHITEPAPER.pdf
 
 Attestation-gated persistence for autonomous agents. Lets an agent survive the death of the machine it runs on without a human ever holding its keys.
 
