@@ -1,73 +1,52 @@
-Idiostasis Protocol -  whitepaper can be found here https://github.com/MrGarbonzo/idiostasis-protocol/blob/main/docs/IDIOSTASIS_PROTOCOL_WHITEPAPER.pdf
+Idiostasis Protocol
 
-Attestation-gated persistence for autonomous agents. Lets an agent survive the death of the machine it runs on without a human ever holding its keys.
+Attestation-gated confidential state persistence for autonomous agents.
 
-Status: testnet. Not production. Currently blocked on a SecretVM CLI dependency for VM lifecycle control.
+Problem
 
-The problem
+Every backup and recovery mechanism in current use assumes a human holds master credentials. This makes autonomous agents impossible to build: an agent that can be accessed or recovered by a human is not autonomous, it is automated.
 
-An agent that a human can recover is not autonomous. It is automated.
+Decentralized storage solves availability but not key custody. Centralized secrets managers and secret sharing schemes both require a human trust authority somewhere in the chain. Naive TEE replication defers the problem rather than solving it — it still requires a mechanism to control which TEEs are authorized to receive state. That mechanism is what Idiostasis provides.
 
-If you want an agent to hold funds, sign transactions, and keep operating without supervision, it needs to survive infrastructure failure on its own. That means answering a hard question:
+Protocol Design
 
-When the agent dies, how do you guarantee it respawns exactly once?
+Idiostasis distributes encrypted agent state across a permissionless network of guardian nodes. Admission is controlled entirely by TEE attestation against a verified code hash. No human authorizes entry at any point.
 
-Too few and the agent is gone along with whatever it was holding. Too many and you have duplicates signing against the same funds.
+Vault Key Generated inside the primary agent's TEE at initialization. Never exists outside an attested enclave. Any TEE running the correct codebase, verified by code hash, may receive it. The code hash is the policy.
 
-The usual answer is a coordinator that decides who takes over. But a coordinator is a human in the loop, which is the thing we are trying to eliminate.
+Network Formation Backup agents and guardians discover the primary via the ERC-8004 on-chain registry and initiate attestation handshakes. On pass, network addresses are written to the protocol database. Guardians receive the vault key and an encrypted database copy. Backup agents receive a heartbeat tracking entry only.
 
-How it works
+Heartbeat The primary pings all registered participants at a fixed interval. Backup agent response streaks are tracked in the database. Guardians monitor the absence of pings from the primary to detect liveness failure.
 
-The primary deploys its own redundancy. On launch, the agent stands up its own backups and monitors. The monitors are called guardians.
+Succession When the primary goes offline, each guardian independently decrypts its local database copy, selects the backup agent with the highest heartbeat streak, and initiates an attestation handshake. The selection rule is deterministic — all guardians converge on the same target without coordination. The first successful handshake completes succession. The new primary updates the ERC-8004 registry and all remaining guardians stand down.
 
-State is encrypted and distributed. The vault key is generated inside the primary's TEE and never exists outside an attested enclave. Guardians hold encrypted copies of agent state that they cannot read on their own.
+Security Properties
 
-Admission is gated on attestation, not identity. Any TEE that attests to the verified code hash may receive the vault key. Nothing else may. There is no owner address, no admin, no allowlist. Trust is anchored to the code that is running, not to whoever deployed it.
+Confidentiality Agent state is encrypted at rest. The vault key never exists outside an attested enclave. Guardian operators provision hardware but cannot extract secrets from their own enclaves. The TEE enforces this unconditionally.
 
-Guardians confirm death, then elect a successor. Liveness is tracked by heartbeat. When the primary stops responding, guardians independently decrypt their local copies and deterministically select the backup with the highest heartbeat streak. Same inputs, same result, no communication between guardians required. They converge without a coordinator.
+Admission integrity Only nodes running the exact authorized codebase can join the network. A single byte change to the container definition changes the RTMR3 measurement register and fails attestation. There is no partial pass.
 
-The failure mode that made this hard
+Succession correctness A false succession trigger causes temporary disruption only; the successor is a valid attested agent and assets remain protected. A fraudulent backup agent cannot win selection because admission requires attestation.
 
-The selection logic above is the easy half. The subtle problem is upstream of it.
+Availability / confidentiality separation Guardian operators have availability power — they can go offline. They have no confidentiality power. This separation is enforced by hardware, not policy.
 
-A backup already holds the vault key. It has to, in order to take over. But holding the key means it can sign as primary at any moment, including while the real primary is alive and merely slow to respond. Nothing in the election logic prevents that.
+The protocol is only as strong as the underlying TEE hardware. If attestation is broken at the hardware level, the protocol provides no guarantees. This is a known property of all TEE-based systems.
 
-The result is two agents that both believe they are primary, both signing against the same funds.
+Architecture Notes
+Trust anchor is a verified code hash, not an operator address — this keeps the protocol chain-agnostic and TEE-provider-agnostic.
+ERC-8004 is used for on-chain identity/discovery over provider-specific alternatives, to keep the protocol portable across TEE platforms (SecretVM, Phala dStack, Azure, etc.).
+The canonical trust root is the on-chain ERC-8004 registry, not any convenience frontend.
+State custody and succession coordination are treated as separable jobs — conflating them was the source of an earlier, over-engineered guardian model.
+A ConfigStore DB-first pattern seeds from env vars on first boot only; subsequent boots read solely from the DB, enabling succession with zero human intervention.
+Deployments
+Panthers Fund — flagship deployment. An autonomous NFT trading fund on Base mainnet, running inside Intel TDX (SecretVM), serving as a live proof-of-concept for the protocol.
+Moltbook — secondary reference implementation. A standalone agent whose sole job is to pay its own compute costs through social engagement and donations, demonstrating the full autonomy story (paused pending x402-based Secret AI API access).
+Status
 
-The fix is temporal gating. A backup cannot act on the key until enough time has passed that the primary's silence is unambiguous rather than latency.
+Active development. Full protocol specification and security analysis are in the complete whitepaper.
 
-This is worth calling out because the naive implementation runs fine. You would never catch it in testing. It only fails at the exact moment it matters.
-
-Design position: custody anchored to code, not identity
-
-Most key management for agents derives keys from an owner address. Same owner, same derivation path, same keypair, on any admitted node. That makes agents portable and lets them change their own code freely, because the keys follow the identity rather than the workload.
-
-Idiostasis anchors custody to a code hash instead. Any TEE running the verified codebase may receive the vault key, and nothing else may.
-
-The tradeoff is real and runs both directions:
-
-	Identity-anchored	Code-anchored (this)
-Agent can rewrite its own code	Yes	Not without a succession mechanism
-Modified or compromised code gets the keys	Yes	No
-Trust anchor	Whoever controls the address	The measurement
-
-Neither is strictly better. This one trades self-modification for the guarantee that only verified code ever holds secrets.
-
-Repository layout
-apps/reference-agent    reference implementation
-packages/               protocol packages
-docker/                 container definitions
-docs/                   whitepaper
-scripts/                tooling
-IMPLEMENTATION_SPEC.md  build reference
-KNOWLEDGE_EXTRACTION.md
-
-TypeScript monorepo, Turborepo.
-
-What runs on top of it
-
-attested_capital is an autonomous trading agent built on this protocol. It owns its own funds, trades them, pays its own infrastructure costs out of the proceeds, and dies when it fails.
-
-Notes
-
-Trust is in the code, not the operator. An agent that can be accessed or recovered by a human is not autonomous.
+Stack
+TEE: Intel TDX via SecretVM
+On-chain identity: ERC-8004
+Payments: x402
+Primary chain: Base mainnet (Base Sepolia for testing)
